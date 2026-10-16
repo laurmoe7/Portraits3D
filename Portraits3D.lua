@@ -968,7 +968,7 @@ local function BuildWindow()
   end
 
   -- A check box; showIf (optional) hides it while it returns false.
-  local function AddCheck(label, x, y, get, set, showIf)
+  local function AddCheck(label, x, y, get, set, showIf, tip)
     local box = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
     box:SetSize(24, 24)
     box:SetPoint("TOPLEFT", x + colX, y)
@@ -976,6 +976,17 @@ local function BuildWindow()
     text:SetPoint("LEFT", box, "RIGHT", 2, 0)
     text:SetText(label)
     box:SetScript("OnClick", function(self) set(self:GetChecked() and true or false) end)
+    if tip then
+      -- the hover area covers the label too
+      box:SetHitRectInsets(0, -((text:GetStringWidth() or 100) + 6), 0, 0)
+      box:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(label)
+        GameTooltip:AddLine(tip, 1, 1, 1, true)
+        GameTooltip:Show()
+      end)
+      box:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
     controls[#controls + 1] = function()
       box:SetChecked(get())
       if showIf then
@@ -1043,7 +1054,8 @@ local function BuildWindow()
   -- ===== Left column =====
   AddSection("GENERAL", -44, 76)
   AddCheck("Rounded square frame", 28, -70, function() return DB.square end,
-    function(on) SetSquare(on); f.refresh() end)
+    function(on) SetSquare(on); f.refresh() end, nil,
+    "Hides the edges and clipping that show when a 3D model is used in the normal round frames.")
   AddCheck("Minimap button", 28, -92, function() return not DB.hideMinimap end,
     function(on) SetMinimapHidden(not on) end)
 
@@ -1055,7 +1067,7 @@ local function BuildWindow()
   FrameCheck("party", 28, -196)
   FrameCheck("pet", 178, -196)
 
-  AddSection("FRAME STYLE", -230, 120)
+  AddSection("ICONS & EFFECTS", -230, 120)
   AddCheck("Level badge", 28, -256, function() return DB.showBadge ~= false end,
     function(on) DB.showBadge = on; RefreshAll(true) end)
   AddCheck("Resting / combat glow", 140, -256, function() return DB.showGlow ~= false end,
@@ -1066,7 +1078,8 @@ local function BuildWindow()
     function(on) DB.showZzz = on; RefreshAll(true) end)
 
   AddCheck("Hide combat indicator", 28, -322, function() return DB.hideSwords == true end,
-    function(on) DB.hideSwords = on; RefreshAll(true) end)
+    function(on) DB.hideSwords = on; RefreshAll(true) end, nil,
+    "Hides the crossed swords that show on your portrait during combat.")
   AddCheck("Hide combat text", 28, -300, function() return DB.hideCombatText == true end,
     function(on) DB.hideCombatText = on; RefreshAll(true) end)
 
