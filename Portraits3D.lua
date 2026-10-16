@@ -13,7 +13,8 @@ local addonName = ...
 local DEFAULTS = { enabled = true, scale = 0.85, zoom = 1, petScale = 0.85, petZoom = 1,
   targetScale = 0.85, targetZoom = 1, partyScale = 0.85, partyZoom = 1, partySquareSize = 1.04, anim = "full",
   hideMinimap = false, square = false, squareSize = 1.04, targetSquareSize = 1.04, petSquareSize = 1.04, background = "black",
-  borderColor = "gold", showBadge = true, showGlow = true }
+  borderColor = "gold", showBadge = true, showGlow = true, showZzz = true, universal = false,
+  offX = 0, offY = 0, targetOffX = 0, targetOffY = 0, partyOffX = 0, partyOffY = 0, petOffX = 0, petOffY = 0 }
 
 -- Rounded-square border (Textures\RoundedFrame.tga, made by tools\make_frame.py).
 -- HOLE is the width of its hole as a fraction of the picture.
@@ -52,7 +53,8 @@ local ENTRIES = {
               "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.LevelBackgroundCircle", "PlayerLevelText" }, side = "left",
     ring = { "PlayerFrame.PlayerFrameContainer" }, content = { "PlayerFrame.PlayerFrameContent" },
     -- the pulsing resting / combat glow around the portrait
-    -- (PlayerRestLoop, the rising Zzz, is left alone)
+    -- the rising Zzz in a rested area; hidden by the "Resting Zzz" option
+    zzz = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PlayerRestLoop" },
     rest = { "PlayerFrame.PlayerFrameContainer.FrameFlash",
              "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PlayerPortraitCornerIcon",
              "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.StatusTexture",
@@ -268,6 +270,10 @@ local function Decorate(entry, active)
     local obj = Resolve(path)
     if type(obj) == "table" and obj.SetAlpha then Hush(obj, square) end
   end
+  for _, path in ipairs(entry.zzz or {}) do
+    local obj = Resolve(path)
+    if type(obj) == "table" and obj.SetAlpha then Hush(obj, active and DB.showZzz == false) end
+  end
   if entry.badge and not entry.levelScanned then
     entry.levelScanned, entry.levelFound = true, {}
     local seen = {}
@@ -351,6 +357,7 @@ end
 -- of target and focus), party and pet.
 local OPT_PREFIX = { pet = "pet", target = "target", targettarget = "target", focus = "target" }
 local function Opt(entry, key)
+  if DB.universal then return DB[key] end -- one set of settings for every frame
   local prefix = entry.unit:match("^party") and "party" or OPT_PREFIX[entry.unit]
   if prefix then return DB[prefix .. key:sub(1, 1):upper() .. key:sub(2)] end
   return DB[key]
@@ -476,7 +483,8 @@ local function ApplyCamera(entry)
   -- Same order Immersion uses for its portrait models.
   pcall(model.SetCamDistanceScale, model, 1)
   pcall(model.SetPortraitZoom, model, Opt(entry, "zoom"))
-  pcall(model.SetPosition, model, 0, 0, 0)
+  -- Left / right and up / down: moves the model within its frame.
+  pcall(model.SetPosition, model, 0, -(Opt(entry, "offX") or 0), Opt(entry, "offY") or 0)
   -- "full" leaves the animation alone: the model plays all its idles by itself.
   if DB.anim ~= "still" then pcall(model.SetPaused, model, false) end
   if DB.anim == "basic" then
@@ -633,56 +641,11 @@ local function Refresh(entry, force)
   entry.portrait:SetAlpha(0)
 end
 
--- ===== Test switches (not saved) =====
--- Force Blizzard's elite / rare / boss border and some indicators to show, so
--- they can be checked against the square frames without finding the right mob.
-local TEST = { deco = "off", pvp = false, leader = false, role = false, mark = false,
-  decoX = 0.10, decoY = 0.11, decoSize = 0.99 }
-local TEST_ATLAS = {
-  elite = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold",
-  rare = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Rare-Silver",
-  boss = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold-Winged",
-}
-local TEST_ITEMS = {
-  pvp = {
-          "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PVPIcon",
-          "TargetFrame.TargetFrameContent.TargetFrameContentContextual.PvpIcon",
-          "TargetFrame.TargetFrameContent.TargetFrameContentContextual.PVPIcon" },
-  leader = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.LeaderIcon",
-             "TargetFrame.TargetFrameContent.TargetFrameContentContextual.LeaderIcon" },
-  role = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.RoleIcon" },
-  mark = { "TargetFrame.TargetFrameContent.TargetFrameContentContextual.RaidTargetIcon" },
-}
-local testShown = {} -- objects we forced on: object -> true
-
-local function DecoEntry()
-  for _, entry in ipairs(ENTRIES) do
-    if entry.unit == "target" then return entry end
-  end
-end
-
-local function SetTestShown(obj, on, key)
-  if on then
-    Hush(obj, false)
-    if key == "pvp" and obj.GetObjectType and obj:GetObjectType() == "Texture" and not (obj.GetAtlas and obj:GetAtlas()) then
-      pcall(obj.SetTexture, obj, "Interface/TargetingFrame/UI-PVP-Alliance")
-    elseif key == "mark" and SetRaidTargetIconTexture then
-      pcall(SetRaidTargetIconTexture, obj, 8)
-    end
-    obj:SetAlpha(1)
-    obj:Show()
-    testShown[obj] = true
-  elseif testShown[obj] then
-    obj:Hide()
-    testShown[obj] = nil
-  end
-end
-
--- Elite / rare / boss border on the target frame. In the square look Blizzard's
--- border sits behind the model, so a copy is drawn above our frame (below the
--- bars and indicators, which stay on top) and Blizzard's own is kept invisible.
--- Offsets are fractions of the border's own width / height; the sliders in the
--- test card override them while a test border is chosen.
+-- ===== Elite / rare / boss border =====
+-- In the square look Blizzard's border sits behind the model, so a copy is drawn
+-- above our frame (below the bars and indicators, which stay on top) and
+-- Blizzard's own is kept invisible. Offsets are fractions of the border's own
+-- width / height.
 local DECO_STYLE = {
   normal = { x = 0.10, y = 0.11, size = 0.99 },
   boss = { x = 0.20, y = 0.06, size = 0.99 },
@@ -691,29 +654,23 @@ local function DecoKind(atlas)
   return (atlas and tostring(atlas):find("Winged")) and "boss" or "normal"
 end
 
+local function DecoEntry()
+  for _, entry in ipairs(ENTRIES) do
+    if entry.unit == "target" then return entry end
+  end
+end
+
 local function UpdateDeco()
   local entry = DecoEntry()
   if not entry or not entry.holder then return end
   local deco = Resolve("TargetFrame.TargetFrameContainer.BossPortraitFrameTexture")
   if type(deco) ~= "table" or not deco.SetAtlas then return end
-  local testing = TEST.deco ~= "off"
-  if testing then
-    Hush(deco, false)
-    pcall(deco.SetAtlas, deco, TEST_ATLAS[TEST.deco], true)
-    deco:SetAlpha(1)
-    deco:Show()
-    testShown[deco] = true
-  elseif testShown[deco] then
-    deco:Hide()
-    testShown[deco] = nil
-  end
   local ov = entry.decoOverlay
   local atlas = deco.GetAtlas and deco:GetAtlas()
   local live = DB.square and DB.enabled and entry.border and entry.holder:IsShown()
-    and atlas and (testing or deco:IsShown())
+    and atlas and deco:IsShown()
   if not live then
     if ov then ov:Hide() end
-    if DB.square then Hush(deco, true) end
     return
   end
   local dw, dh = deco:GetSize()
@@ -722,8 +679,7 @@ local function UpdateDeco()
   local pcx, pcy = entry.portrait:GetCenter()
   if dcx and pcx then dx, dy = dcx - pcx, dcy - pcy end
   local sq = Opt(entry, "squareSize")
-  local style = testing and { x = TEST.decoX, y = TEST.decoY, size = TEST.decoSize }
-    or DECO_STYLE[DecoKind(atlas)]
+  local style = DECO_STYLE[DecoKind(atlas)]
   if not ov then
     ov = CreateFrame("Frame", nil, entry.holder)
     ov.tex = ov:CreateTexture(nil, "OVERLAY")
@@ -733,33 +689,16 @@ local function UpdateDeco()
   ov:SetFrameLevel(entry.holder:GetFrameLevel() + 4) -- above the border, below the level badge, bars and PvP icon
   ov:SetAllPoints(entry.holder)
   pcall(ov.tex.SetAtlas, ov.tex, atlas)
-  local s = sq * style.size
-  ov.tex:SetSize(dw * s, dh * s)
+  local scaled = sq * style.size
+  ov.tex:SetSize(dw * scaled, dh * scaled)
   ov.tex:ClearAllPoints()
   ov.tex:SetPoint("CENTER", entry.portrait, "CENTER", dx * sq + style.x * dw, dy * sq + style.y * dh)
   ov:Show()
   Hush(deco, true)
 end
 
-local function ApplyTests()
-  local anyOn = TEST.deco ~= "off" or TEST.pvp or TEST.leader or TEST.role or TEST.mark
-  if not anyOn and not next(testShown) then return end
-  UpdateDeco()
-  for key, paths in pairs(TEST_ITEMS) do
-    for _, path in ipairs(paths) do
-      local obj = Resolve(path)
-      if type(obj) == "table" and obj.Show then SetTestShown(obj, TEST[key], key) end
-    end
-  end
-  -- Blizzard's own update functions are NOT called from here: running them from
-  -- our code taints them, and the health text then fails on secret numbers.
-  -- Anything we hid comes back on the next target change or a /reload.
-  if not anyOn then UpdateDeco() end
-end
-
 local function RefreshAll(force)
   for _, entry in ipairs(ENTRIES) do Refresh(entry, force) end
-  ApplyTests()
   UpdateDeco()
 end
 
@@ -844,10 +783,18 @@ local BORDERS = {
 local COLUMN = 322 -- distance between the two columns of the window
 local SetMinimapHidden = function() end -- replaced below, once the minimap button exists
 
+-- Which set of size / camera / position settings the window edits.
+local SIZE_GROUPS = {
+  { key = "player", label = "Player", prefix = "" },
+  { key = "target", label = "Target & focus", prefix = "target" },
+  { key = "party", label = "Party", prefix = "party" },
+  { key = "pet", label = "Pet", prefix = "pet" },
+}
+
 local function BuildWindow()
   local ok, f = pcall(CreateFrame, "Frame", "Portraits3DOptions", UIParent, "BackdropTemplate")
   if not ok then f = CreateFrame("Frame", "Portraits3DOptions", UIParent) end
-  f:SetSize(660, 712)
+  f:SetSize(660, 504)
   f:SetPoint("CENTER", UIParent, "CENTER", 200, 0) -- out of the way of the unit frames
   f:SetFrameStrata("DIALOG")
   f:SetClampedToScreen(true)
@@ -891,7 +838,8 @@ local function BuildWindow()
     text:SetText(label)
   end
 
-  local function AddCheck(label, x, y, get, set)
+  -- A check box; showIf (optional) hides it while it returns false.
+  local function AddCheck(label, x, y, get, set, showIf)
     local box = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
     box:SetSize(24, 24)
     box:SetPoint("TOPLEFT", x + colX, y)
@@ -899,10 +847,19 @@ local function BuildWindow()
     text:SetPoint("LEFT", box, "RIGHT", 2, 0)
     text:SetText(label)
     box:SetScript("OnClick", function(self) set(self:GetChecked() and true or false) end)
-    controls[#controls + 1] = function() box:SetChecked(get()) end
+    controls[#controls + 1] = function()
+      box:SetChecked(get())
+      if showIf then
+        local show = showIf()
+        box:SetShown(show); text:SetShown(show)
+      end
+    end
   end
 
-  local function AddSlider(key, label, lo, hi, y, showIf)
+  -- A slider on a saved number. key is the setting's name, or a function that
+  -- returns it (the size card edits a different setting per frame group).
+  local function AddSlider(key, label, lo, hi, y, step, showIf)
+    local function Key() return type(key) == "function" and key() or key end
     local text = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     text:SetPoint("TOPLEFT", 30 + colX, y)
     text:SetText(label)
@@ -914,20 +871,20 @@ local function BuildWindow()
     slider:SetSize(262, 16)
     slider:SetPoint("TOPLEFT", 30 + colX, y - 18)
     slider:SetMinMaxValues(lo, hi)
-    slider:SetValueStep(0.05)
+    slider:SetValueStep(step)
     slider:SetObeyStepOnDrag(true)
     pcall(function() slider.Low:SetText(""); slider.High:SetText(""); slider.Text:Hide() end)
     slider:SetScript("OnValueChanged", function(self, v)
-      v = math.floor(v / 0.05 + 0.5) * 0.05
+      v = math.floor(v / step + 0.5) * step
       value:SetText(string.format("%.2f", v))
-      if self.syncing or math.abs(DB[key] - v) < 1e-6 then return end
-      SetNumber(key, v)
+      if self.syncing or math.abs((DB[Key()] or 0) - v) < 1e-6 then return end
+      SetNumber(Key(), v)
     end)
     controls[#controls + 1] = function()
       slider.syncing = true
-      slider:SetValue(DB[key])
+      slider:SetValue(DB[Key()] or 0)
       slider.syncing = false
-      value:SetText(string.format("%.2f", DB[key]))
+      value:SetText(string.format("%.2f", DB[Key()] or 0))
       if showIf then
         local show = showIf()
         text:SetShown(show); value:SetShown(show); slider:SetShown(show)
@@ -943,6 +900,15 @@ local function BuildWindow()
 
   local function IsRound() return not DB.square end
   local function IsSquare() return DB.square end
+
+  -- Two check boxes per row, for a list of { key, label } choices.
+  local function AddChoices(list, top, current, apply)
+    for i, item in ipairs(list) do
+      AddCheck(item.label, i % 2 == 1 and 28 or 178, top - math.floor((i - 1) / 2) * 22,
+        function() return current() == item.key end,
+        function() apply(item.key); f.refresh() end)
+    end
+  end
 
   -- ===== Left column =====
   AddSection("GENERAL", -44, 98)
@@ -960,111 +926,76 @@ local function BuildWindow()
   FrameCheck("party", 28, -218)
   FrameCheck("pet", 178, -218)
 
-  AddSection("FRAME STYLE", -252, 104)
-  for i, border in ipairs(BORDERS) do
-    AddCheck(border.label, i % 2 == 1 and 28 or 178, -278 - math.floor((i - 1) / 2) * 22,
-      function() return (DB.borderColor or "gold") == border.key end,
-      function() SetBorderColor(border.key); f.refresh() end)
-  end
+  AddSection("FRAME STYLE", -252, 126)
+  AddChoices(BORDERS, -278, function() return DB.borderColor or "gold" end, SetBorderColor)
   AddCheck("Level badge", 28, -326, function() return DB.showBadge ~= false end,
     function(on) DB.showBadge = on; RefreshAll(true) end)
   AddCheck("Resting / combat glow", 140, -326, function() return DB.showGlow ~= false end,
     function(on) DB.showGlow = on; RefreshAll(true) end)
 
-  AddSection("BACKGROUND", -362, 76)
-  for i, bgMode in ipairs(BACKGROUNDS) do
-    AddCheck(bgMode.label, i % 2 == 1 and 28 or 178, -388 - math.floor((i - 1) / 2) * 22,
-      function() return (DB.background or "black") == bgMode.key end,
-      function() SetBackground(bgMode.key); f.refresh() end)
-  end
+  AddCheck("Resting Zzz", 28, -350, function() return DB.showZzz ~= false end,
+    function(on) DB.showZzz = on; RefreshAll(true) end)
 
-  AddSection("ANIMATION", -444, 76)
-  for i, anim in ipairs(ANIMATIONS) do
-    AddCheck(anim.label, i % 2 == 1 and 28 or 178, -470 - math.floor((i - 1) / 2) * 22,
-      function() return DB.anim == anim.key end,
-      function() SetAnimationMode(anim.key); f.refresh() end)
-  end
-
-  -- Temporary test switches (not saved), to preview Blizzard's border and indicators.
-  AddSection("TEST (not saved)", -526, 100)
-  local TEST_MODES = { { "off", "No border" }, { "elite", "Elite border" }, { "rare", "Rare border" }, { "boss", "Boss border" } }
-  for i, mode in ipairs(TEST_MODES) do
-    AddCheck(mode[2], i % 2 == 1 and 28 or 178, -552 - ((i > 2) and 22 or 0),
-      function() return TEST.deco == mode[1] end,
-      function()
-        TEST.deco = mode[1]
-        local style = DECO_STYLE[mode[1] == "boss" and "boss" or "normal"]
-        TEST.decoX, TEST.decoY, TEST.decoSize = style.x, style.y, style.size
-        ApplyTests(); UpdateDeco(); f.refresh()
-      end)
-  end
-  AddCheck("PvP + leader", 28, -600, function() return TEST.pvp end,
-    function(on) TEST.pvp, TEST.leader = on, on; ApplyTests() end)
-  AddCheck("Role + raid marker", 178, -600, function() return TEST.role end,
-    function(on) TEST.role, TEST.mark = on, on; ApplyTests() end)
+  AddSection("BACKGROUND", -384, 76)
+  AddChoices(BACKGROUNDS, -410, function() return DB.background or "black" end, SetBackground)
 
   -- ===== Right column =====
   colX = COLUMN
-  local function SizeCard(label, top, prefix)
-    local function K(name) return prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2)) end
-    AddSection(label, top, 114)
-    AddSlider(K("scale"), "Model size", 0.5, 1.2, top - 26, IsRound)
-    AddSlider(K("squareSize"), "Frame size", 0.8, 2, top - 26, IsSquare)
-    AddSlider(K("zoom"), "Camera zoom", 0, 1, top - 72)
-  end
-  SizeCard("PLAYER", -44, "")
-  SizeCard("TARGET + TARGET OF TARGET + FOCUS", -164, "target")
-  SizeCard("PARTY", -284, "party")
-  SizeCard("PET", -404, "pet")
-
-  -- Border adjustment sliders (not saved): read the numbers off and tell me.
-  AddSection("BORDER ADJUST (test, not saved)", -524, 166)
-  local function AddTestSlider(key, label, lo, hi, y)
-    local text = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    text:SetPoint("TOPLEFT", 30 + colX, y)
-    text:SetText(label)
-    local value = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    value:SetPoint("TOPLEFT", 30 + colX, y)
-    value:SetWidth(262)
-    value:SetJustifyH("RIGHT")
-    local slider = CreateFrame("Slider", nil, f, "OptionsSliderTemplate")
-    slider:SetSize(262, 16)
-    slider:SetPoint("TOPLEFT", 30 + colX, y - 18)
-    slider:SetMinMaxValues(lo, hi)
-    slider:SetValueStep(0.01)
-    slider:SetObeyStepOnDrag(true)
-    pcall(function() slider.Low:SetText(""); slider.High:SetText(""); slider.Text:Hide() end)
-    slider:SetScript("OnValueChanged", function(self, v)
-      v = math.floor(v / 0.01 + 0.5) * 0.01
-      value:SetText(string.format("%.2f", v))
-      if self.syncing or math.abs(TEST[key] - v) < 1e-6 then return end
-      TEST[key] = v
-      UpdateDeco()
-    end)
-    controls[#controls + 1] = function()
-      slider.syncing = true
-      slider:SetValue(TEST[key])
-      slider.syncing = false
-      value:SetText(string.format("%.2f", TEST[key]))
+  local selected = "player" -- the frame group the size card edits
+  local function Prefix()
+    if DB.universal then return "" end
+    for _, group in ipairs(SIZE_GROUPS) do
+      if group.key == selected then return group.prefix end
     end
+    return ""
   end
-  AddTestSlider("decoX", "Left / right", -0.5, 0.5, -552)
-  AddTestSlider("decoY", "Up / down", -0.5, 0.5, -598)
-  AddTestSlider("decoSize", "Size", 0.5, 1.5, -644)
+  local function K(name)
+    local prefix = Prefix()
+    return prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))
+  end
+  local function Separate() return not DB.universal end
+
+  AddSection("SIZE & POSITION", -44, 332)
+  AddCheck("Same for all frames", 28, -70, function() return DB.universal end,
+    function(on)
+      DB.universal = on
+      for _, entry in ipairs(ENTRIES) do
+        Layout(entry)
+        if entry.model and entry.holder:IsShown() then ApplyCamera(entry) end
+      end
+      f.refresh()
+    end)
+  for i, group in ipairs(SIZE_GROUPS) do
+    AddCheck(group.label, i % 2 == 1 and 28 or 178, -96 - math.floor((i - 1) / 2) * 22,
+      function() return selected == group.key end,
+      function() selected = group.key; f.refresh() end, Separate)
+  end
+  AddSlider(function() return K("scale") end, "Model size", 0.5, 1.2, -150, 0.05, IsRound)
+  AddSlider(function() return K("squareSize") end, "Frame size", 0.8, 2, -150, 0.05, IsSquare)
+  AddSlider(function() return K("zoom") end, "Camera zoom", 0, 1, -196, 0.05)
+  AddSlider(function() return K("offX") end, "Model left / right", -0.5, 0.5, -242, 0.01)
+  AddSlider(function() return K("offY") end, "Model up / down", -0.5, 0.5, -288, 0.01)
+
+  AddSection("ANIMATION", -382, 76)
+  AddChoices(ANIMATIONS, -408, function() return DB.anim end, SetAnimationMode)
 
   local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   reset:SetSize(130, 22)
-  reset:SetPoint("TOPRIGHT", close, "BOTTOMRIGHT", -8, -2)
+  reset:SetPoint("BOTTOMRIGHT", -24, 14)
   reset:SetText("Reset to defaults")
   reset:SetScript("OnClick", function()
     DB.frames = {}
     DB.anim = DEFAULTS.anim
+    DB.universal = DEFAULTS.universal
     SetBackground(DEFAULTS.background)
     DB.borderColor, DB.showBadge, DB.showGlow = DEFAULTS.borderColor, DEFAULTS.showBadge, DEFAULTS.showGlow
+    DB.showZzz = DEFAULTS.showZzz
     SetSquare(DEFAULTS.square)
-    for _, key in ipairs({ "scale", "zoom", "squareSize", "targetScale", "targetZoom", "targetSquareSize",
-        "partyScale", "partyZoom", "partySquareSize", "petScale", "petZoom", "petSquareSize" }) do
-      SetNumber(key, DEFAULTS[key])
+    for _, prefix in ipairs({ "", "target", "party", "pet" }) do
+      for _, name in ipairs({ "scale", "zoom", "squareSize", "offX", "offY" }) do
+        local key = prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))
+        SetNumber(key, DEFAULTS[key])
+      end
     end
     SetEnabled(DEFAULTS.enabled)
     f.refresh()
