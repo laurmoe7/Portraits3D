@@ -25,7 +25,7 @@ local EDGE_PAD_TOP = 0.13 -- how far (portrait widths) the kept area reaches abo
 local EDGE_PAD_BOTTOM = 0.05 -- ...and below the mana bar
 local RING_KEEP = 0.54 -- Blizzard's frame picture is hidden left of this line (portrait widths from the portrait centre, towards the bars); /p3d ring <n> to try others
 local PLAQUE_SHIFT = 0 -- the square frame sits this far (portrait widths) towards the bars
-local HOLE = 0.86
+local HOLE = 0.89
 
 -- Frames that can be switched on or off in the options (party 1-4 share one).
 local GROUPS = {
@@ -52,8 +52,8 @@ local ENTRIES = {
               "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.LevelBackgroundCircle", "PlayerLevelText" }, side = "left",
     ring = { "PlayerFrame.PlayerFrameContainer" }, content = { "PlayerFrame.PlayerFrameContent" },
     -- the pulsing resting / combat glow around the portrait
-    rest = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PlayerRestLoop",
-             "PlayerFrame.PlayerFrameContainer.FrameFlash",
+    -- (PlayerRestLoop, the rising Zzz, is left alone)
+    rest = { "PlayerFrame.PlayerFrameContainer.FrameFlash",
              "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PlayerPortraitCornerIcon",
              "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.StatusTexture",
              "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.StatusTexture",
@@ -305,6 +305,8 @@ local function Decorate(entry, active)
     if square then
       local n = UnitLevel(entry.unit)
       entry.badgeText:SetText((n and n > 0) and n or "??")
+      -- white on the player frame (Blizzard shows it white there), yellow elsewhere
+      if entry.unit == "player" then entry.badgeText:SetTextColor(1, 1, 1) else entry.badgeText:SetTextColor(1, 0.82, 0) end
     end
   end
 end
@@ -444,7 +446,7 @@ local function ApplyStyle(entry)
   end
   entry.clip:SetFrameLevel(base + 1)
   entry.border:SetFrameLevel(base + 3)
-  if entry.badge then entry.badge:SetFrameLevel(base + 8) end -- above the raised content frame
+  if entry.badge then entry.badge:SetFrameLevel(base + 5) end -- above the dragon, below the content frame (PvP icon)
   entry.bg:ClearAllPoints()
   if DB.square then
     entry.bg:SetAllPoints(entry.clip)
@@ -533,22 +535,28 @@ local function Setup(entry)
   -- A level badge of our own, since Blizzard's sits under the model.
   if entry.level then
     local badge = CreateFrame("Frame", nil, holder)
-    local rim = badge:CreateTexture(nil, "ARTWORK", nil, 0)
-    rim:SetAllPoints(badge)
-    rim:SetColorTexture(0.8, 0.65, 0.25, 1)
-    local rimMask = badge:CreateMaskTexture()
-    rimMask:SetAllPoints(badge)
-    rimMask:SetTexture("Interface/CharacterFrame/TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    rim:AddMaskTexture(rimMask)
-    local disc = badge:CreateTexture(nil, "ARTWORK", nil, 1)
+    -- Round layers, outside in: faint dark outline, thin pale-bronze ring, brown disc
+    -- (Blizzard's level circle has a thin tan ring around a dark brown centre).
+    local ROUND = "Interface/CharacterFrame/TempPortraitAlphaMask"
+    local function Layer(inset, sub, r, g, bl, a)
+      local tex = badge:CreateTexture(nil, "ARTWORK", nil, sub)
+      tex:SetPoint("TOPLEFT", inset, -inset)
+      tex:SetPoint("BOTTOMRIGHT", -inset, inset)
+      tex:SetColorTexture(r, g, bl, a or 1)
+      local mask = badge:CreateMaskTexture()
+      mask:SetPoint("TOPLEFT", inset, -inset)
+      mask:SetPoint("BOTTOMRIGHT", -inset, inset)
+      mask:SetTexture(ROUND, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+      tex:AddMaskTexture(mask)
+      return tex
+    end
+    Layer(0, 0, 0.03, 0.02, 0.01, 0.55)
+    local ring = Layer(0.5, 1, 0.62, 0.50, 0.36)
+    pcall(function() ring:SetGradient("VERTICAL", CreateColor(0.50, 0.39, 0.27, 1), CreateColor(0.74, 0.62, 0.46, 1)) end)
+    local disc = badge:CreateTexture(nil, "ARTWORK", nil, 2)
     disc:SetPoint("TOPLEFT", 2, -2)
     disc:SetPoint("BOTTOMRIGHT", -2, 2)
-    disc:SetColorTexture(0.05, 0.05, 0.07, 1)
-    local discMask = badge:CreateMaskTexture()
-    discMask:SetPoint("TOPLEFT", 2, -2)
-    discMask:SetPoint("BOTTOMRIGHT", -2, 2)
-    discMask:SetTexture("Interface/CharacterFrame/TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    disc:AddMaskTexture(discMask)
+    disc:SetTexture("Interface/AddOns/Portraits3D/Textures/BadgeDisc")
     local text = badge:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     text:SetPoint("CENTER", badge, "CENTER", 0, 0)
     badge:Hide()
@@ -623,8 +631,145 @@ local function Refresh(entry, force)
   entry.portrait:SetAlpha(0)
 end
 
+-- ===== Test switches (not saved) =====
+-- Force Blizzard's elite / rare / boss border and some indicators to show, so
+-- they can be checked against the square frames without finding the right mob.
+local TEST = { deco = "off", pvp = false, leader = false, role = false, mark = false,
+  decoX = 0.10, decoY = 0.11, decoSize = 0.99 }
+local TEST_ATLAS = {
+  elite = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold",
+  rare = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Rare-Silver",
+  boss = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold-Winged",
+}
+local TEST_ITEMS = {
+  pvp = {
+          "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PVPIcon",
+          "TargetFrame.TargetFrameContent.TargetFrameContentContextual.PvpIcon",
+          "TargetFrame.TargetFrameContent.TargetFrameContentContextual.PVPIcon" },
+  leader = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.LeaderIcon",
+             "TargetFrame.TargetFrameContent.TargetFrameContentContextual.LeaderIcon" },
+  role = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.RoleIcon" },
+  mark = { "TargetFrame.TargetFrameContent.TargetFrameContentContextual.RaidTargetIcon" },
+}
+local testShown = {} -- objects we forced on: object -> true
+
+local function DecoEntry()
+  for _, entry in ipairs(ENTRIES) do
+    if entry.unit == "target" then return entry end
+  end
+end
+
+local function SetTestShown(obj, on, key)
+  if on then
+    Hush(obj, false)
+    if key == "pvp" and obj.GetObjectType and obj:GetObjectType() == "Texture" and not (obj.GetAtlas and obj:GetAtlas()) then
+      pcall(obj.SetTexture, obj, "Interface/TargetingFrame/UI-PVP-Alliance")
+    elseif key == "mark" and SetRaidTargetIconTexture then
+      pcall(SetRaidTargetIconTexture, obj, 8)
+    end
+    obj:SetAlpha(1)
+    obj:Show()
+    testShown[obj] = true
+  elseif testShown[obj] then
+    obj:Hide()
+    testShown[obj] = nil
+  end
+end
+
+-- Elite / rare / boss border on the target frame. In the square look Blizzard's
+-- border sits behind the model, so a copy is drawn above our frame (below the
+-- bars and indicators, which stay on top) and Blizzard's own is kept invisible.
+-- Offsets are fractions of the border's own width / height; the sliders in the
+-- test card override them while a test border is chosen.
+local DECO_STYLE = {
+  normal = { x = 0.10, y = 0.11, size = 0.99 },
+  boss = { x = 0.20, y = 0.06, size = 0.99 },
+}
+local function DecoKind(atlas)
+  return (atlas and tostring(atlas):find("Winged")) and "boss" or "normal"
+end
+
+local function UpdateDeco()
+  local entry = DecoEntry()
+  if not entry or not entry.holder then return end
+  local deco = Resolve("TargetFrame.TargetFrameContainer.BossPortraitFrameTexture")
+  if type(deco) ~= "table" or not deco.SetAtlas then return end
+  local testing = TEST.deco ~= "off"
+  if testing then
+    Hush(deco, false)
+    pcall(deco.SetAtlas, deco, TEST_ATLAS[TEST.deco], true)
+    deco:SetAlpha(1)
+    deco:Show()
+    testShown[deco] = true
+  elseif testShown[deco] then
+    deco:Hide()
+    testShown[deco] = nil
+  end
+  local ov = entry.decoOverlay
+  local atlas = deco.GetAtlas and deco:GetAtlas()
+  local live = DB.square and DB.enabled and entry.border and entry.holder:IsShown()
+    and atlas and (testing or deco:IsShown())
+  if not live then
+    if ov then ov:Hide() end
+    if DB.square then Hush(deco, true) end
+    return
+  end
+  local dw, dh = deco:GetSize()
+  local dx, dy = 0, 0
+  local dcx, dcy = deco:GetCenter()
+  local pcx, pcy = entry.portrait:GetCenter()
+  if dcx and pcx then dx, dy = dcx - pcx, dcy - pcy end
+  local sq = Opt(entry, "squareSize")
+  local style = testing and { x = TEST.decoX, y = TEST.decoY, size = TEST.decoSize }
+    or DECO_STYLE[DecoKind(atlas)]
+  if not ov then
+    ov = CreateFrame("Frame", nil, entry.holder)
+    ov.tex = ov:CreateTexture(nil, "OVERLAY")
+    entry.decoOverlay = ov
+  end
+  ov:SetFrameStrata(entry.holder:GetFrameStrata())
+  ov:SetFrameLevel(entry.holder:GetFrameLevel() + 4) -- above the border, below the level badge, bars and PvP icon
+  ov:SetAllPoints(entry.holder)
+  pcall(ov.tex.SetAtlas, ov.tex, atlas)
+  local s = sq * style.size
+  ov.tex:SetSize(dw * s, dh * s)
+  ov.tex:ClearAllPoints()
+  ov.tex:SetPoint("CENTER", entry.portrait, "CENTER", dx * sq + style.x * dw, dy * sq + style.y * dh)
+  ov:Show()
+  Hush(deco, true)
+end
+
+local function ApplyTests()
+  local anyOn = TEST.deco ~= "off" or TEST.pvp or TEST.leader or TEST.role or TEST.mark
+  if not anyOn and not next(testShown) then return end
+  UpdateDeco()
+  for key, paths in pairs(TEST_ITEMS) do
+    for _, path in ipairs(paths) do
+      local obj = Resolve(path)
+      if type(obj) == "table" and obj.Show then SetTestShown(obj, TEST[key], key) end
+    end
+  end
+  -- Blizzard's own update functions are NOT called from here: running them from
+  -- our code taints them, and the health text then fails on secret numbers.
+  -- Anything we hid comes back on the next target change or a /reload.
+  if not anyOn then UpdateDeco() end
+end
+
 local function RefreshAll(force)
   for _, entry in ipairs(ENTRIES) do Refresh(entry, force) end
+  ApplyTests()
+  UpdateDeco()
+end
+
+-- Blizzard decides the border when the target changes; look again just after.
+local function SetupDecoEvents()
+  local decoEvents = CreateFrame("Frame")
+  decoEvents:RegisterEvent("PLAYER_TARGET_CHANGED")
+  pcall(decoEvents.RegisterEvent, decoEvents, "UNIT_CLASSIFICATION_CHANGED")
+  decoEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+  decoEvents:SetScript("OnEvent", function()
+    if C_Timer and C_Timer.After then C_Timer.After(0.1, UpdateDeco) else UpdateDeco() end
+  end)
 end
 
 local function RefreshUnit(unit, force)
@@ -700,7 +845,7 @@ local SetMinimapHidden = function() end -- replaced below, once the minimap butt
 local function BuildWindow()
   local ok, f = pcall(CreateFrame, "Frame", "Portraits3DOptions", UIParent, "BackdropTemplate")
   if not ok then f = CreateFrame("Frame", "Portraits3DOptions", UIParent) end
-  f:SetSize(660, 560)
+  f:SetSize(660, 712)
   f:SetPoint("CENTER", UIParent, "CENTER", 200, 0) -- out of the way of the unit frames
   f:SetFrameStrata("DIALOG")
   f:SetClampedToScreen(true)
@@ -838,6 +983,24 @@ local function BuildWindow()
       function() SetAnimationMode(anim.key); f.refresh() end)
   end
 
+  -- Temporary test switches (not saved), to preview Blizzard's border and indicators.
+  AddSection("TEST (not saved)", -526, 100)
+  local TEST_MODES = { { "off", "No border" }, { "elite", "Elite border" }, { "rare", "Rare border" }, { "boss", "Boss border" } }
+  for i, mode in ipairs(TEST_MODES) do
+    AddCheck(mode[2], i % 2 == 1 and 28 or 178, -552 - ((i > 2) and 22 or 0),
+      function() return TEST.deco == mode[1] end,
+      function()
+        TEST.deco = mode[1]
+        local style = DECO_STYLE[mode[1] == "boss" and "boss" or "normal"]
+        TEST.decoX, TEST.decoY, TEST.decoSize = style.x, style.y, style.size
+        ApplyTests(); UpdateDeco(); f.refresh()
+      end)
+  end
+  AddCheck("PvP + leader", 28, -600, function() return TEST.pvp end,
+    function(on) TEST.pvp, TEST.leader = on, on; ApplyTests() end)
+  AddCheck("Role + raid marker", 178, -600, function() return TEST.role end,
+    function(on) TEST.role, TEST.mark = on, on; ApplyTests() end)
+
   -- ===== Right column =====
   colX = COLUMN
   local function SizeCard(label, top, prefix)
@@ -852,9 +1015,44 @@ local function BuildWindow()
   SizeCard("PARTY", -284, "party")
   SizeCard("PET", -404, "pet")
 
+  -- Border adjustment sliders (not saved): read the numbers off and tell me.
+  AddSection("BORDER ADJUST (test, not saved)", -524, 166)
+  local function AddTestSlider(key, label, lo, hi, y)
+    local text = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    text:SetPoint("TOPLEFT", 30 + colX, y)
+    text:SetText(label)
+    local value = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    value:SetPoint("TOPLEFT", 30 + colX, y)
+    value:SetWidth(262)
+    value:SetJustifyH("RIGHT")
+    local slider = CreateFrame("Slider", nil, f, "OptionsSliderTemplate")
+    slider:SetSize(262, 16)
+    slider:SetPoint("TOPLEFT", 30 + colX, y - 18)
+    slider:SetMinMaxValues(lo, hi)
+    slider:SetValueStep(0.01)
+    slider:SetObeyStepOnDrag(true)
+    pcall(function() slider.Low:SetText(""); slider.High:SetText(""); slider.Text:Hide() end)
+    slider:SetScript("OnValueChanged", function(self, v)
+      v = math.floor(v / 0.01 + 0.5) * 0.01
+      value:SetText(string.format("%.2f", v))
+      if self.syncing or math.abs(TEST[key] - v) < 1e-6 then return end
+      TEST[key] = v
+      UpdateDeco()
+    end)
+    controls[#controls + 1] = function()
+      slider.syncing = true
+      slider:SetValue(TEST[key])
+      slider.syncing = false
+      value:SetText(string.format("%.2f", TEST[key]))
+    end
+  end
+  AddTestSlider("decoX", "Left / right", -0.5, 0.5, -552)
+  AddTestSlider("decoY", "Up / down", -0.5, 0.5, -598)
+  AddTestSlider("decoSize", "Size", 0.5, 1.5, -644)
+
   local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   reset:SetSize(130, 22)
-  reset:SetPoint("BOTTOMRIGHT", -24, 16)
+  reset:SetPoint("TOPRIGHT", close, "BOTTOMRIGHT", -8, -2)
   reset:SetText("Reset to defaults")
   reset:SetScript("OnClick", function()
     DB.frames = {}
@@ -1104,6 +1302,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     self:UnregisterEvent("ADDON_LOADED")
     BuildPanel()
     BuildMinimapButton()
+    SetupDecoEvents()
     -- Not every event exists in every client build; skip the ones that do not.
     for _, name in ipairs({ "PLAYER_ENTERING_WORLD", "PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED",
         "GROUP_ROSTER_UPDATE", "UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_PET", "UNIT_CONNECTION",

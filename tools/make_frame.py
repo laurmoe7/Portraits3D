@@ -5,7 +5,7 @@ import struct, sys, zlib
 import numpy as np
 
 SIZE, SS = 256, 4
-HOLE = 0.86          # hole width as a fraction of the picture; keep in sync with Portraits3D.lua
+HOLE = 0.89          # hole width as a fraction of the picture; keep in sync with Portraits3D.lua
 R_OUT, R_IN = 0.30, 0.20
 LIGHT = np.array([-0.6, -0.8])   # direction towards the light (top left; y grows downward)
 
@@ -36,17 +36,44 @@ def lerp(a, b, f):
     f = np.clip(f, 0, 1)[..., None]
     return np.array(a) * (1 - f) + np.array(b) * f
 
-GOLD = np.array((0.80, 0.62, 0.24))
+GOLD = np.array((0.72, 0.55, 0.32))
 def lit(s):                                # gold shaded by the light
-    return GOLD * np.clip(0.80 + 0.55 * s, 0.35, 1.45)[..., None]
+    return GOLD * np.clip(0.85 + 0.35 * s, 0.45, 1.25)[..., None]
 
 # bronze body: lighter towards the top, with a little of the edge lighting
-body = lerp((0.36, 0.27, 0.13), (0.20, 0.14, 0.07), (y + 1) / 2) * np.clip(0.9 + 0.15 * s_out, 0.8, 1.1)[..., None]
+body = lerp((0.30, 0.185, 0.105), (0.20, 0.12, 0.07), (y + 1) / 2) * np.clip(0.95 + 0.10 * s_out, 0.85, 1.1)[..., None]
 col = body
-col = np.where(((t >= 0.007) & (t < 0.030))[..., None], lit(s_out), col)
+col = np.where(((t >= 0.007) & (t < 0.026))[..., None], lit(s_out), col)
+col = np.where(((t >= 0.026) & (t < 0.036))[..., None], np.array((0.07, 0.03, 0.01)), col)
 col = np.where((t < 0.007)[..., None], np.array((0.05, 0.04, 0.02)), col)
-col = np.where(((u >= 0.004) & (u < 0.017))[..., None], lit(s_in), col)
+col = np.where(((u >= 0.004) & (u < 0.019))[..., None], lit(s_in), col)
 col = np.where((u < 0.004)[..., None], np.array((0.03, 0.02, 0.01)), col)
+# weathering, so it is not too clean: blotchy brightness, fine grain, little dark
+# spots and a few short scratches (fixed seed: the same picture every run)
+rng = np.random.default_rng(7)
+def blotch(cells):
+    g = rng.random((cells + 1, cells + 1))
+    idx = np.linspace(0, cells, n, endpoint=False)
+    i0 = idx.astype(int); f = idx - i0
+    f = f * f * (3 - 2 * f)
+    rows = g[i0] * (1 - f)[:, None] + g[i0 + 1] * f[:, None]
+    return rows[:, i0] * (1 - f)[None, :] + rows[:, i0 + 1] * f[None, :]
+wear = 1 + 0.22 * (blotch(10) - 0.5) + 0.16 * (blotch(36) - 0.5) + 0.10 * (rng.random((n, n)) - 0.5)
+spots = np.zeros((n, n))
+for _ in range(170):                       # dark pits, mostly tiny
+    cx, cy = rng.integers(0, n, 2)
+    r = rng.choice([2, 3, 4, 6, 9], p=[0.3, 0.3, 0.2, 0.14, 0.06]) * SS / 4
+    y0, y1, x0, x1 = max(cy - 12, 0), min(cy + 12, n), max(cx - 12, 0), min(cx + 12, n)
+    yy, xx = np.mgrid[y0:y1, x0:x1]
+    spots[y0:y1, x0:x1] = np.maximum(spots[y0:y1, x0:x1], np.clip(1.4 - np.hypot(xx - cx, yy - cy) / r, 0, 1))
+for _ in range(14):                        # short scratches
+    cx, cy = rng.integers(0, n, 2)
+    ang = rng.random() * np.pi; L = rng.integers(20, 60)
+    for k in range(L):
+        px_, py_ = int(cx + np.cos(ang) * k), int(cy + np.sin(ang) * k)
+        if 0 <= px_ < n and 0 <= py_ < n:
+            spots[py_, px_] = max(spots[py_, px_], 0.55)
+col = col * (wear * (1 - 0.65 * spots))[..., None]
 col = np.clip(col, 0, 1)
 
 ring = (d_out < 0) & (d_hole > 0)
@@ -111,3 +138,24 @@ ep[..., 3] = (np.clip(ea, 0, 1) * 255 + 0.5).astype(np.uint8)
 open("Textures/RingCutEdge.tga", "wb").write(hdr + ep[..., [2, 1, 0, 3]].tobytes())
 em = ep[:, ::-1, :]
 open("Textures/RingCutEdgeMirror.tga", "wb").write(hdr + em[..., [2, 1, 0, 3]].tobytes())
+
+# ---- Textures/BadgeDisc.tga: the level circle's centre. A round disc, dark brown
+# with a black vignette towards its edge and a little grain.
+BS = 64
+bn = BS * SS
+bc = (np.arange(bn) + 0.5) / bn * 2 - 1
+bx, by = np.meshgrid(bc, bc)
+rad = np.hypot(bx, by)
+inside = np.clip((1 - rad) * bn / 2, 0, 1)                 # antialiased circle edge
+vig = np.clip((rad - 0.35) / 0.65, 0, 1) ** 1.6            # 0 in the middle, 1 at the rim
+centre = np.array((0.22, 0.155, 0.095)) * (1.12 - 0.22 * (by + 1) / 2)[..., None]
+edge = np.array((0.03, 0.02, 0.012))
+brng = np.random.default_rng(3)
+grain = 1 + 0.16 * (brng.random((bn, bn)) - 0.5)
+bcol = (centre * (1 - vig[..., None]) + edge * vig[..., None]) * grain[..., None]
+bdown = lambda a: a.reshape(BS, SS, BS, SS, *a.shape[2:]).mean(axis=(1, 3))
+ba = bdown(inside)
+brgb = bdown(bcol * inside[..., None]) / np.maximum(ba[..., None], 1e-6)
+bpx = (np.dstack([np.clip(brgb, 0, 1), ba]) * 255 + 0.5).astype(np.uint8)
+bhdr = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, BS, BS, 32, 0x28)
+open("Textures/BadgeDisc.tga", "wb").write(bhdr + bpx[..., [2, 1, 0, 3]].tobytes())
