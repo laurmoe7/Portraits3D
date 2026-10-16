@@ -13,7 +13,7 @@ local addonName = ...
 local DEFAULTS = { enabled = true, scale = 0.85, zoom = 1, petScale = 0.85, petZoom = 1,
   targetScale = 0.85, targetZoom = 1, partyScale = 0.85, partyZoom = 1, partySquareSize = 1.04, anim = "full",
   hideMinimap = false, square = false, squareSize = 1.04, targetSquareSize = 1.04, petSquareSize = 1.04, background = "black",
-  borderColor = "gold", showBadge = true, showGlow = true, showZzz = true, universal = false,
+  borderColor = "gold", showBadge = true, showGlow = true, showZzz = true, gradient = 1, universal = false,
   offX = 0, offY = 0, targetOffX = 0, targetOffY = 0, partyOffX = 0, partyOffY = 0, petOffX = 0, petOffY = 0 }
 
 -- Rounded-square border (Textures\RoundedFrame.tga, made by tools\make_frame.py).
@@ -209,9 +209,28 @@ end
 
 -- The portrait background: black, a gradient that starts black at the bottom and
 -- fades to transparent at the top, the same in the unit's class color, or none.
+-- The background fills its frame; a gradient only reaches up the "Gradient height"
+-- fraction of it from the bottom.
+local function AnchorBackground(entry)
+  local bg = entry.bg
+  if not bg or not entry.holder then return end
+  local target = DB.square and entry.clip or entry.holder
+  local mode = DB.background or "black"
+  local extent = (mode == "gradient" or mode == "class") and (DB.gradient or 1) or 1
+  bg:ClearAllPoints()
+  if extent >= 0.999 then
+    bg:SetAllPoints(target)
+    return
+  end
+  bg:SetPoint("BOTTOMLEFT", target, "BOTTOMLEFT")
+  bg:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT")
+  bg:SetHeight(math.max(1, (target:GetHeight() or 0) * extent))
+end
+
 local function ApplyBackground(entry)
   local bg = entry.bg
   if not bg then return end
+  AnchorBackground(entry)
   local mode = DB.background or "black"
   if mode == "clear" then
     bg:Hide()
@@ -425,6 +444,7 @@ local function Layout(entry)
     clip:SetPoint("CENTER", holder, "CENTER")
     clip:SetSize(w * Opt(entry, "scale"), h * Opt(entry, "scale"))
   end
+  AnchorBackground(entry)
 end
 
 -- Switches one frame between the round look and the rounded-square look.
@@ -454,12 +474,10 @@ local function ApplyStyle(entry)
   entry.clip:SetFrameLevel(base + 1)
   entry.border:SetFrameLevel(base + 3)
   if entry.badge then entry.badge:SetFrameLevel(base + 5) end -- above the dragon, below the content frame (PvP icon)
-  entry.bg:ClearAllPoints()
+  AnchorBackground(entry)
   if DB.square then
-    entry.bg:SetAllPoints(entry.clip)
     entry.bg:RemoveMaskTexture(entry.mask)
   else
-    entry.bg:SetAllPoints(entry.holder)
     entry.bg:AddMaskTexture(entry.mask)
   end
   entry.border:SetShown(DB.square and entry.holder:IsShown())
@@ -481,8 +499,10 @@ end
 local function ApplyCamera(entry)
   local model = entry.model
   -- Same order Immersion uses for its portrait models.
-  pcall(model.SetCamDistanceScale, model, 1)
-  pcall(model.SetPortraitZoom, model, Opt(entry, "zoom"))
+  -- Zoom 0-1 is the portrait zoom (1 = face); above 1 the camera also moves closer.
+  local zoom = Opt(entry, "zoom") or 1
+  pcall(model.SetCamDistanceScale, model, zoom > 1 and 1 / zoom or 1)
+  pcall(model.SetPortraitZoom, model, math.min(zoom, 1))
   -- Left / right and up / down: moves the model within its frame.
   pcall(model.SetPosition, model, 0, -(Opt(entry, "offX") or 0), Opt(entry, "offY") or 0)
   -- "full" leaves the animation alone: the model plays all its idles by itself.
@@ -757,9 +777,9 @@ end
 
 local BACKGROUNDS = {
   { key = "black", label = "Black" },
-  { key = "gradient", label = "Gradient" },
-  { key = "class", label = "Class gradient" },
   { key = "clear", label = "Transparent" },
+  { key = "class", label = "Class gradient" },
+  { key = "gradient", label = "Gradient" },
 }
 
 local function SetBorderColor(mode)
@@ -773,22 +793,15 @@ local ANIMATIONS = {
   { key = "still", label = "No animation" },
 }
 
-local BORDERS = {
-  { key = "gold", label = "Gold" },
-  { key = "silver", label = "Silver" },
-  { key = "dark", label = "Dark" },
-  { key = "class", label = "Class color" },
-}
-
 local COLUMN = 322 -- distance between the two columns of the window
 local SetMinimapHidden = function() end -- replaced below, once the minimap button exists
 
 -- Which set of size / camera / position settings the window edits.
 local SIZE_GROUPS = {
-  { key = "player", label = "Player", prefix = "" },
-  { key = "target", label = "Target & focus", prefix = "target" },
-  { key = "party", label = "Party", prefix = "party" },
-  { key = "pet", label = "Pet", prefix = "pet" },
+  { key = "player", label = "Player", prefix = "", covers = "Player" },
+  { key = "target", label = "Target", prefix = "target", covers = "Target, target of target and focus" },
+  { key = "party", label = "Party", prefix = "party", covers = "Party members 1-4" },
+  { key = "pet", label = "Pet", prefix = "pet", covers = "Pet" },
 }
 
 local function BuildWindow()
@@ -911,33 +924,34 @@ local function BuildWindow()
   end
 
   -- ===== Left column =====
-  AddSection("GENERAL", -44, 98)
-  AddCheck("Show 3D portraits", 28, -70, function() return DB.enabled end, SetEnabled)
-  AddCheck("Rounded square frame", 28, -92, function() return DB.square end,
+  AddSection("GENERAL", -44, 76)
+  AddCheck("Rounded square frame", 28, -70, function() return DB.square end,
     function(on) SetSquare(on); f.refresh() end)
-  AddCheck("Minimap button", 28, -114, function() return not DB.hideMinimap end,
+  AddCheck("Minimap button", 28, -92, function() return not DB.hideMinimap end,
     function(on) SetMinimapHidden(not on) end)
 
-  AddSection("FRAMES", -148, 98)
-  FrameCheck("player", 28, -174)
-  FrameCheck("target", 178, -174)
-  FrameCheck("targettarget", 28, -196)
-  FrameCheck("focus", 178, -196)
-  FrameCheck("party", 28, -218)
-  FrameCheck("pet", 178, -218)
+  AddSection("FRAMES", -126, 98)
+  FrameCheck("player", 28, -152)
+  FrameCheck("target", 178, -152)
+  FrameCheck("targettarget", 28, -174)
+  FrameCheck("focus", 178, -174)
+  FrameCheck("party", 28, -196)
+  FrameCheck("pet", 178, -196)
 
-  AddSection("FRAME STYLE", -252, 126)
-  AddChoices(BORDERS, -278, function() return DB.borderColor or "gold" end, SetBorderColor)
-  AddCheck("Level badge", 28, -326, function() return DB.showBadge ~= false end,
+  AddSection("FRAME STYLE", -230, 76)
+  AddCheck("Level badge", 28, -256, function() return DB.showBadge ~= false end,
     function(on) DB.showBadge = on; RefreshAll(true) end)
-  AddCheck("Resting / combat glow", 140, -326, function() return DB.showGlow ~= false end,
+  AddCheck("Resting / combat glow", 140, -256, function() return DB.showGlow ~= false end,
     function(on) DB.showGlow = on; RefreshAll(true) end)
-
-  AddCheck("Resting Zzz", 28, -350, function() return DB.showZzz ~= false end,
+  AddCheck("Resting Zzz", 28, -278, function() return DB.showZzz ~= false end,
     function(on) DB.showZzz = on; RefreshAll(true) end)
 
-  AddSection("BACKGROUND", -384, 76)
-  AddChoices(BACKGROUNDS, -410, function() return DB.background or "black" end, SetBackground)
+  AddSection("BACKGROUND", -312, 122)
+  AddChoices(BACKGROUNDS, -338, function() return DB.background or "black" end, SetBackground)
+  AddSlider("gradient", "Gradient height", 0.1, 1, -386, 0.05, function()
+    local mode = DB.background or "black"
+    return mode == "gradient" or mode == "class"
+  end)
 
   -- ===== Right column =====
   colX = COLUMN
@@ -953,8 +967,7 @@ local function BuildWindow()
     local prefix = Prefix()
     return prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))
   end
-  local function Separate() return not DB.universal end
-
+  
   AddSection("SIZE & POSITION", -44, 332)
   AddCheck("Same for all frames", 28, -70, function() return DB.universal end,
     function(on)
@@ -965,14 +978,52 @@ local function BuildWindow()
       end
       f.refresh()
     end)
+  -- Tabs choose which frames the sliders below edit.
+  local tabs = {}
   for i, group in ipairs(SIZE_GROUPS) do
-    AddCheck(group.label, i % 2 == 1 and 28 or 178, -96 - math.floor((i - 1) / 2) * 22,
-      function() return selected == group.key end,
-      function() selected = group.key; f.refresh() end, Separate)
+    local tab = CreateFrame("Button", nil, f)
+    tab:SetSize(66, 24)
+    tab:SetPoint("TOPLEFT", 28 + colX + (i - 1) * 68, -98)
+    local back = tab:CreateTexture(nil, "BACKGROUND")
+    back:SetAllPoints()
+    local line = tab:CreateTexture(nil, "ARTWORK")
+    line:SetPoint("BOTTOMLEFT")
+    line:SetPoint("BOTTOMRIGHT")
+    line:SetHeight(2)
+    local label = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    label:SetPoint("CENTER")
+    label:SetText(group.label)
+    tab:SetScript("OnClick", function() selected = group.key; f.refresh() end)
+    tab:SetScript("OnEnter", function(self)
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:SetText(group.covers)
+      GameTooltip:Show()
+    end)
+    tab:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    tabs[i] = { tab = tab, back = back, line = line, label = label, key = group.key }
+  end
+  local covers = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+  covers:SetPoint("TOPLEFT", 30 + colX, -126)
+  covers:SetTextColor(0.75, 0.75, 0.75)
+  controls[#controls + 1] = function()
+    for _, t in ipairs(tabs) do
+      local on = t.key == selected
+      t.tab:SetShown(not DB.universal)
+      t.back:SetColorTexture(1, 1, 1, on and 0.16 or 0.05)
+      t.line:SetColorTexture(1, 0.82, 0, on and 0.9 or 0)
+      t.label:SetTextColor(on and 1 or 0.7, on and 0.82 or 0.7, on and 0 or 0.7)
+    end
+    local text = "Every frame"
+    if not DB.universal then
+      for _, group in ipairs(SIZE_GROUPS) do
+        if group.key == selected then text = "Editing: " .. group.covers end
+      end
+    end
+    covers:SetText(text)
   end
   AddSlider(function() return K("scale") end, "Model size", 0.5, 1.2, -150, 0.05, IsRound)
-  AddSlider(function() return K("squareSize") end, "Frame size", 0.8, 2, -150, 0.05, IsSquare)
-  AddSlider(function() return K("zoom") end, "Camera zoom", 0, 1, -196, 0.05)
+  AddSlider(function() return K("squareSize") end, "Frame size", 0.8, 1.25, -150, 0.05, IsSquare)
+  AddSlider(function() return K("zoom") end, "Camera zoom", 0, 2, -196, 0.05)
   AddSlider(function() return K("offX") end, "Model left / right", -0.5, 0.5, -242, 0.01)
   AddSlider(function() return K("offY") end, "Model up / down", -0.5, 0.5, -288, 0.01)
 
@@ -990,6 +1041,7 @@ local function BuildWindow()
     SetBackground(DEFAULTS.background)
     DB.borderColor, DB.showBadge, DB.showGlow = DEFAULTS.borderColor, DEFAULTS.showBadge, DEFAULTS.showGlow
     DB.showZzz = DEFAULTS.showZzz
+    SetNumber("gradient", DEFAULTS.gradient)
     SetSquare(DEFAULTS.square)
     for _, prefix in ipairs({ "", "target", "party", "pet" }) do
       for _, name in ipairs({ "scale", "zoom", "squareSize", "offX", "offY" }) do
@@ -1042,7 +1094,7 @@ local function BuildMinimapButton()
   border:SetSize(53, 53)
   border:SetPoint("TOPLEFT")
   local icon = button:CreateTexture(nil, "BACKGROUND")
-  icon:SetTexture("Interface/Icons/INV_Misc_Head_Human_01")
+  icon:SetTexture("Interface/Icons/Achievement_Character_Human_Female")
   icon:SetSize(20, 20)
   icon:SetPoint("CENTER", 2, 0)
   button:SetHighlightTexture("Interface/Minimap/UI-Minimap-ZoomButton-Highlight")
@@ -1219,6 +1271,11 @@ frame:SetScript("OnEvent", function(self, event, arg1)
       if DB[k] == nil then DB[k] = v end
     end
     if type(DB.frames) ~= "table" then DB.frames = {} end
+    DB.borderColor = "gold" -- the frame colour options were removed
+    DB.icon = nil -- the icon picker was removed
+    for _, key in ipairs({ "squareSize", "targetSquareSize", "partySquareSize", "petSquareSize" }) do
+      if type(DB[key]) == "number" and DB[key] > 1.25 then DB[key] = 1.25 end
+    end
     -- The square frame default size changed; replace the old saved sizes once.
     if not DB.version or DB.version < 10 then
       DB.squareSize, DB.petSquareSize = DEFAULTS.squareSize, DEFAULTS.petSquareSize

@@ -3,7 +3,7 @@
 ## Notes: Replaces the flat portraits on the default player, target, focus, pet and party frames with animated 3D models.
 ## Author: laurmoe7
 ## Version: 0.1
-## IconTexture: Interface\Icons\INV_Misc_Head_Human_01
+## IconTexture: Interface\Icons\Achievement_Character_Human_Female
 ## SavedVariables: Portraits3DDB
 
 Portraits3D.lua
