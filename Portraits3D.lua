@@ -12,8 +12,8 @@ local addonName = ...
 
 local DEFAULTS = { enabled = true, scale = 0.85, zoom = 1, petScale = 0.85, petZoom = 1,
   targetScale = 0.85, targetZoom = 1, partyScale = 0.85, partyZoom = 1, partySquareSize = 1.04, anim = "full",
-  hideMinimap = false, square = false, squareSize = 1.04, targetSquareSize = 1.04, petSquareSize = 1.04, background = "black",
-  borderColor = "gold", showBadge = true, showGlow = true, showZzz = true, greyDead = true, hideCombatText = false, gradient = 1, gradientAlpha = 1,
+  hideMinimap = true, square = false, squareSize = 1.04, targetSquareSize = 1.04, petSquareSize = 1.04, background = "black",
+  showBadge = true, showGlow = true, showZzz = true, greyDead = true, hideCombatText = false, hideSwords = false, gradient = 1, gradientAlpha = 1,
   turn = 0, targetTurn = 0, partyTurn = 0, petTurn = 0,
   frameX = 0, targetFrameX = 0, partyFrameX = 0, petFrameX = 0, universal = false,
   offX = 0, offY = 0, targetOffX = 0, targetOffY = 0, partyOffX = 0, partyOffY = 0, petOffX = 0, petOffY = 0 }
@@ -26,7 +26,7 @@ local GLOW_RATIO = 0.80 -- how much of the glow picture the framed square fills
 local RING_CUT_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RingCutEdge"
 local EDGE_PAD_TOP = 0.13 -- how far (portrait widths) the kept area reaches above the name text (the plate is taller than its text)
 local EDGE_PAD_BOTTOM = 0.05 -- ...and below the mana bar
-local RING_KEEP = 0.54 -- Blizzard's frame picture is hidden left of this line (portrait widths from the portrait centre, towards the bars); /p3d ring <n> to try others
+local RING_KEEP = 0.54 -- Blizzard's frame picture is hidden left of this line (portrait widths from the portrait centre, towards the bars); adjust it here
 local PLAQUE_SHIFT = 0 -- the square frame sits this far (portrait widths) towards the bars
 local HOLE = 0.89
 
@@ -57,6 +57,9 @@ local ENTRIES = {
     -- the pulsing resting / combat glow around the portrait
     -- the rising Zzz in a rested area; hidden by the "Resting Zzz" option
     zzz = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PlayerRestLoop" },
+    -- the crossed swords shown on the portrait while in combat
+    swords = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.AttackIcon",
+               "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.AttackIcon", "PlayerAttackIcon" },
     -- the floating damage / healing numbers shown over the portrait
     combat = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.HitIndicator",
                "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.HitIndicator", "PlayerHitIndicator" },
@@ -191,6 +194,12 @@ local function Hush(obj, on)
         if self.portraits3dHush and a ~= 0 then self:SetAlpha(0) end
       end)
     end
+    -- newer game versions can also set the alpha from a true / false value
+    if obj.SetAlphaFromBoolean then
+      pcall(hooksecurefunc, obj, "SetAlphaFromBoolean", function(self)
+        if self.portraits3dHush then self:SetAlpha(0) end
+      end)
+    end
   end
 end
 
@@ -266,26 +275,6 @@ local function ApplyBackground(entry)
   end
 end
 
--- Tints the square frame's gold border: gold (as drawn), silver, dark, or the
--- unit's class color (gold for units that are not players).
-local function ApplyBorderColor(entry)
-  local tex = entry.frameTex
-  if not tex then return end
-  local mode = DB.borderColor or "gold"
-  local r, g, b, desaturate = 1, 1, 1, false
-  if mode == "silver" then
-    desaturate, r, g, b = true, 0.9, 0.93, 1
-  elseif mode == "dark" then
-    desaturate, r, g, b = true, 0.55, 0.55, 0.6
-  elseif mode == "class" and UnitIsPlayer and UnitIsPlayer(entry.unit) then
-    local _, class = UnitClass(entry.unit)
-    local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
-    if c then desaturate, r, g, b = true, c.r, c.g, c.b end
-  end
-  pcall(tex.SetDesaturated, tex, desaturate)
-  tex:SetVertexColor(r, g, b)
-end
-
 local function Decorate(entry, active)
   local square = DB.square and active
   for _, path in ipairs(entry.level or {}) do
@@ -299,6 +288,31 @@ local function Decorate(entry, active)
   for _, path in ipairs(entry.zzz or {}) do
     local obj = Resolve(path)
     if type(obj) == "table" and obj.SetAlpha then Hush(obj, active and DB.showZzz == false) end
+  end
+  if entry.swords then
+    -- Also look inside the frame for a piece named or drawn like a combat icon.
+    if not entry.swordsScanned then
+      entry.swordsScanned = true
+      local parent = Resolve("PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual")
+      if type(parent) == "table" then
+        for key, value in pairs(parent) do
+          if type(key) == "string" and type(value) == "table" and value.GetObjectType
+              and value:GetObjectType() == "Texture" then
+            local atlas = value.GetAtlas and value:GetAtlas()
+            if key:lower():find("attack") or key:lower():find("combat")
+                or (type(atlas) == "string" and atlas:lower():find("combat")) then
+              entry.swordObjects = entry.swordObjects or {}
+              entry.swordObjects[#entry.swordObjects + 1] = value
+            end
+          end
+        end
+      end
+    end
+    for _, obj in ipairs(entry.swordObjects or {}) do Hush(obj, DB.hideSwords == true) end
+    for _, path in ipairs(entry.swords) do
+      local obj = Resolve(path)
+      if type(obj) == "table" and obj.SetAlpha then Hush(obj, DB.hideSwords == true) end
+    end
   end
   for _, path in ipairs(entry.combat or {}) do
     local obj = Resolve(path)
@@ -321,7 +335,6 @@ local function Decorate(entry, active)
     for _, obj in ipairs(entry.scanFound or {}) do Hush(obj, square) end
   end
   ApplyBackground(entry)
-  if square then ApplyBorderColor(entry) end
   if entry.glowTex then
     local combat = UnitAffectingCombat and UnitAffectingCombat("player")
     local resting = IsResting and IsResting()
@@ -431,7 +444,7 @@ local function Layout(entry)
       end
       entry.cut:SetSize(height, height)
       entry.cut:ClearAllPoints()
-      local x = dir * w * (DB.ringKeep or RING_KEEP)
+      local x = dir * w * RING_KEEP
       if dir == 1 then
         entry.cut:SetPoint("TOPLEFT", entry.portrait, "CENTER", x, top)
       else
@@ -639,12 +652,73 @@ local function GroupOf(entry)
   return entry.unit:match("^party") and "party" or entry.unit
 end
 
+-- Target of target can hold more than one flat portrait picture; collect every
+-- texture inside it that is named like a portrait, so all of them can be hidden.
+local function FlatPieces(entry)
+  if entry.flatPieces then return entry.flatPieces end
+  local list = { entry.portrait }
+  if entry.unit == "targettarget" and entry.root then
+    for _, name in ipairs({ "Portrait", "portrait" }) do
+      local piece = Resolve(entry.root .. "." .. name)
+      if type(piece) == "table" and piece.SetAlpha and piece ~= entry.portrait then list[#list + 1] = piece end
+    end
+    local root = Resolve(entry.root)
+    local seen = {}
+    local function walk(frame, depth)
+      if type(frame) ~= "table" or seen[frame] or depth > 2 then return end
+      seen[frame] = true
+      for key, value in pairs(frame) do
+        if type(key) == "string" and type(value) == "table" and value.GetObjectType
+            and value.SetAlpha and value ~= entry.portrait and value:GetObjectType() == "Texture" then
+          local lower = key:lower()
+          if lower:find("portrait", 1, true) and not lower:find("mask", 1, true)
+              and not lower:find("icon", 1, true) and not lower:find("corner", 1, true) then
+            local known = false
+            for _, have in ipairs(list) do if have == value then known = true end end
+            if not known then list[#list + 1] = value end
+          end
+        end
+      end
+      if frame.GetChildren then
+        for _, child in ipairs({ frame:GetChildren() }) do
+          if child ~= entry.holder then walk(child, depth + 1) end
+        end
+      end
+    end
+    walk(root, 0)
+  end
+  entry.flatPieces = list
+  return list
+end
+
+-- Hiding by alpha is not always enough (target of target kept its flat portrait):
+-- an empty mask on the picture hides it whatever the game does with its alpha.
+local function Cover2D(entry, piece, on)
+  if not piece.AddMaskTexture then return end
+  entry.covers = entry.covers or {}
+  local mask = entry.covers[piece]
+  if not mask then
+    if not on then return end
+    mask = entry.holder:CreateMaskTexture()
+    mask:SetAllPoints(piece)
+    mask:SetTexture("Interface/AddOns/Portraits3D/Textures/Blank", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    entry.covers[piece] = mask
+  end
+  if on and not mask.p3dOn then
+    mask.p3dOn = true
+    piece:AddMaskTexture(mask)
+  elseif not on and mask.p3dOn then
+    mask.p3dOn = false
+    piece:RemoveMaskTexture(mask)
+  end
+end
+
 local function Show2D(entry)
   entry.state = nil
   entry.holder:Hide()
   entry.border:Hide()
   Decorate(entry, false)
-  entry.portrait:SetAlpha(1)
+  for _, piece in ipairs(FlatPieces(entry)) do Hush(piece, false); Cover2D(entry, piece, false) end
 end
 
 local testParty = false -- /p3d testparty: party frames show the player's model
@@ -669,10 +743,17 @@ local function Refresh(entry, force)
   if testParty and unit:match("^party") then unit = "player" end
   if not DB.enabled or DB.frames[GroupOf(entry)] == false or not UnitExists(unit) or not UnitIsConnected(unit) or not UnitIsVisible(unit) then
     Show2D(entry)
+    -- A disconnected unit has no 3D model; its flat portrait is shown grey instead.
+    if DB.enabled and DB.greyDead ~= false and UnitExists(unit) and not UnitIsConnected(unit) then
+      pcall(entry.portrait.SetDesaturated, entry.portrait, true)
+    end
     return
   end
   Decorate(entry, true)
   ApplyLook(entry, unit)
+  for _, piece in ipairs(FlatPieces(entry)) do
+    if (piece:GetAlpha() or 0) > 0 then Hush(piece, true) end
+  end
   local state = (UnitGUID(unit) or "?") .. ":" .. tostring(UnitIsDead(unit) and true or false)
   if entry.state == state and not force then return end
   entry.state = state
@@ -694,7 +775,9 @@ local function Refresh(entry, force)
       ApplyLook(entry, unit)
     end
   end)
-  entry.portrait:SetAlpha(0)
+  -- Blizzard redraws the flat portrait (and its alpha) whenever the unit changes,
+  -- which showed it behind the model on target of target; keep it hidden.
+  for _, piece in ipairs(FlatPieces(entry)) do Hush(piece, true); Cover2D(entry, piece, true) end
 end
 
 -- ===== Elite / rare / boss border =====
@@ -819,11 +902,6 @@ local BACKGROUNDS = {
   { key = "class", label = "Class gradient" },
   { key = "gradient", label = "Gradient" },
 }
-
-local function SetBorderColor(mode)
-  DB.borderColor = mode
-  for _, entry in ipairs(ENTRIES) do ApplyBorderColor(entry) end
-end
 
 local ANIMATIONS = {
   { key = "full", label = "All idles" },
@@ -977,27 +1055,29 @@ local function BuildWindow()
   FrameCheck("party", 28, -196)
   FrameCheck("pet", 178, -196)
 
-  AddSection("FRAME STYLE", -230, 98)
+  AddSection("FRAME STYLE", -230, 120)
   AddCheck("Level badge", 28, -256, function() return DB.showBadge ~= false end,
     function(on) DB.showBadge = on; RefreshAll(true) end)
   AddCheck("Resting / combat glow", 140, -256, function() return DB.showGlow ~= false end,
     function(on) DB.showGlow = on; RefreshAll(true) end)
-  AddCheck("Grey when dead", 140, -278, function() return DB.greyDead ~= false end,
+  AddCheck("Grey when dead / DC'd", 140, -278, function() return DB.greyDead ~= false end,
     function(on) DB.greyDead = on; RefreshAll(true) end)
   AddCheck("Resting Zzz", 28, -278, function() return DB.showZzz ~= false end,
     function(on) DB.showZzz = on; RefreshAll(true) end)
 
+  AddCheck("Hide combat indicator", 28, -322, function() return DB.hideSwords == true end,
+    function(on) DB.hideSwords = on; RefreshAll(true) end)
   AddCheck("Hide combat text", 28, -300, function() return DB.hideCombatText == true end,
     function(on) DB.hideCombatText = on; RefreshAll(true) end)
 
-  AddSection("BACKGROUND", -334, 168)
-  AddChoices(BACKGROUNDS, -360, function() return DB.background or "black" end, SetBackground)
+  AddSection("BACKGROUND", -356, 168)
+  AddChoices(BACKGROUNDS, -382, function() return DB.background or "black" end, SetBackground)
   local function IsGradient()
     local mode = DB.background or "black"
     return mode == "gradient" or mode == "class"
   end
-  AddSlider("gradient", "Gradient height", 0.1, 1, -408, 0.05, IsGradient)
-  AddSlider("gradientAlpha", "Gradient opacity", 0.1, 1, -454, 0.05, IsGradient)
+  AddSlider("gradient", "Gradient height", 0.1, 1, -430, 0.05, IsGradient)
+  AddSlider("gradientAlpha", "Gradient opacity", 0.1, 1, -476, 0.05, IsGradient)
 
   -- ===== Right column =====
   colX = COLUMN
@@ -1094,16 +1174,16 @@ local function BuildWindow()
   AddChoices(ANIMATIONS, -538, function() return DB.anim end, SetAnimationMode)
 
   local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  reset:SetSize(130, 22)
+  reset:SetSize(140, 22)
   reset:SetPoint("BOTTOMRIGHT", -24, 14)
-  reset:SetText("Reset to defaults")
-  reset:SetScript("OnClick", function()
+  reset:SetText("Reset all settings")
+  local function DoReset()
     DB.frames = {}
     DB.anim = DEFAULTS.anim
     DB.universal = DEFAULTS.universal
     SetBackground(DEFAULTS.background)
-    DB.borderColor, DB.showBadge, DB.showGlow = DEFAULTS.borderColor, DEFAULTS.showBadge, DEFAULTS.showGlow
-    DB.showZzz, DB.greyDead, DB.hideCombatText = DEFAULTS.showZzz, DEFAULTS.greyDead, DEFAULTS.hideCombatText
+    DB.showBadge, DB.showGlow = DEFAULTS.showBadge, DEFAULTS.showGlow
+    DB.showZzz, DB.greyDead, DB.hideCombatText, DB.hideSwords = DEFAULTS.showZzz, DEFAULTS.greyDead, DEFAULTS.hideCombatText, DEFAULTS.hideSwords
     SetNumber("gradient", DEFAULTS.gradient)
     SetNumber("gradientAlpha", DEFAULTS.gradientAlpha)
     SetSquare(DEFAULTS.square)
@@ -1115,7 +1195,26 @@ local function BuildWindow()
     end
     SetEnabled(DEFAULTS.enabled)
     f.refresh()
+  end
+  reset:SetScript("OnClick", function()
+    if StaticPopupDialogs and StaticPopup_Show then
+      StaticPopupDialogs["PORTRAITS3D_RESET"] = {
+        text = "Reset every 3D Portraits setting to its default?",
+        button1 = YES or "Yes", button2 = NO or "No",
+        OnAccept = DoReset, timeout = 0, whileDead = true, hideOnEscape = true,
+      }
+      StaticPopup_Show("PORTRAITS3D_RESET")
+    else
+      DoReset()
+    end
   end)
+  reset:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText("Reset all settings")
+    GameTooltip:AddLine("Puts every option on every tab back to its default.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  reset:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
   f.refresh = function() for _, update in ipairs(controls) do update() end end
   f:SetScript("OnShow", f.refresh)
@@ -1139,7 +1238,12 @@ end
 local minimapButton
 
 local function PlaceMinimapButton(angle)
-  local radius = (tonumber(Minimap:GetWidth()) or 140) / 2 + 6
+  -- Same placement as other minimap buttons: on the rim, allowing for the minimap's
+  -- and the button's own scale.
+  local width = tonumber(Minimap:GetWidth()) or 140
+  local mapScale = tonumber((Minimap:GetEffectiveScale())) or 1
+  local buttonScale = tonumber((minimapButton:GetEffectiveScale())) or 1
+  local radius = (width / 2) * (mapScale / buttonScale) + 6
   minimapButton:ClearAllPoints()
   minimapButton:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
 end
@@ -1252,7 +1356,10 @@ local function Dump(unit)
           and value.GetObjectType then
         lines = lines + 1
         local atlas = value.GetAtlas and value:GetAtlas()
-        Say(string.format("%s.%s  %s%s", label, key, value:GetObjectType(), atlas and ("  atlas=" .. tostring(atlas)) or ""))
+        local alpha = value.GetAlpha and value:GetAlpha()
+        local visible = value.IsShown and value:IsShown()
+        Say(string.format("%s.%s  %s%s%s", label, key, value:GetObjectType(), atlas and ("  atlas=" .. tostring(atlas)) or "",
+          (alpha and visible) and string.format("  alpha=%.1f shown=%s", alpha, tostring(visible)) or ""))
         if value.GetChildren and value ~= entry.holder then walk(value, label .. "." .. key, depth + 1) end
       end
     end
@@ -1289,40 +1396,46 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
   if cmd == "on" or cmd == "off" then
     SetEnabled(cmd == "on")
     Say(DB.enabled and "on" or "off")
-  elseif cmd == "ring" then
-    local n = tonumber(arg)
-    if n and n >= 0.3 and n <= 0.9 then
-      DB.ringKeep = n
-      for _, entry in ipairs(ENTRIES) do Layout(entry) end
-      Say("Blizzard frame hidden left of " .. n)
-    else
-      Say("/p3d ring <0.3-0.9>  (now " .. (DB.ringKeep or RING_KEEP) .. ")")
-    end
-  elseif cmd == "testparty" then
-    if InCombatLockdown and InCombatLockdown() then Say("not while in combat") return end
-    testParty = not testParty
-    local shown = 0
-    if testParty and PartyFrame and PartyFrame.Show then pcall(PartyFrame.Show, PartyFrame) end
-    for i = 1, 4 do
-      local frame = Resolve("PartyFrame.MemberFrame" .. i) or _G["PartyMemberFrame" .. i]
-      if type(frame) == "table" and frame.Show then
-        pcall(testParty and frame.Show or frame.Hide, frame)
-        shown = shown + 1
-      end
-    end
-    RefreshAll(true)
-    Say(testParty and ("party test ON: " .. shown .. " party frames shown with your model; /p3d testparty again to stop") or "party test off")
   elseif cmd == "minimap" then
     SetMinimapHidden(not DB.hideMinimap)
     Say("minimap button " .. (DB.hideMinimap and "hidden" or "shown"))
-  elseif cmd == "dump" then
-    Dump(arg ~= "" and arg or "player")
-  elseif cmd == "debug" then
-    Debug()
+  elseif cmd == "dev" then
+    -- developer tools, not needed in normal use
+    local sub, rest = arg:match("^(%S*)%s*(.-)$")
+    if sub == "testparty" then
+      if InCombatLockdown and InCombatLockdown() then Say("not while in combat") return end
+      testParty = not testParty
+      local shown = 0
+      if testParty and PartyFrame and PartyFrame.Show then pcall(PartyFrame.Show, PartyFrame) end
+      for i = 1, 4 do
+        local frame = Resolve("PartyFrame.MemberFrame" .. i) or _G["PartyMemberFrame" .. i]
+        if type(frame) == "table" and frame.Show then
+          pcall(testParty and frame.Show or frame.Hide, frame)
+          shown = shown + 1
+        end
+      end
+      RefreshAll(true)
+      Say(testParty and ("party test ON: " .. shown .. " party frames shown with your model; /p3d dev testparty again to stop") or "party test off")
+    elseif sub == "dump" then
+      Dump(rest ~= "" and rest or "player")
+    elseif sub == "debug" then
+      Debug()
+    elseif sub == "tot" then
+      for _, entry in ipairs(ENTRIES) do
+        if entry.unit == "targettarget" and entry.portrait then
+          for i, piece in ipairs(FlatPieces(entry)) do
+            Say(string.format("flat piece %d: alpha=%.1f hushed=%s shown=%s", i, piece:GetAlpha(), tostring(piece.portraits3dHush), tostring(piece:IsShown())))
+          end
+          Say("model shown: " .. tostring(entry.holder and entry.holder:IsShown()) .. ", path: " .. tostring(entry.path))
+        end
+      end
+    else
+      Say("/p3d dev testparty | dump <unit> | debug")
+    end
   elseif cmd == "" or cmd == "options" or cmd == "config" then
     ToggleWindow()
   else
-    Say("/p3d on | off | testparty | ring | minimap | debug (/p3d alone opens the options)")
+    Say("/p3d opens the options. Also: /p3d on | off | minimap")
   end
 end
 
@@ -1337,7 +1450,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
       if DB[k] == nil then DB[k] = v end
     end
     if type(DB.frames) ~= "table" then DB.frames = {} end
-    DB.borderColor = "gold" -- the frame colour options were removed
+    DB.borderColor = nil -- the frame colour options were removed
     DB.icon = nil -- the icon picker was removed
     for _, key in ipairs({ "squareSize", "targetSquareSize", "partySquareSize", "petSquareSize" }) do
       if type(DB[key]) == "number" and DB[key] > 1.25 then DB[key] = 1.25 end

@@ -174,3 +174,9 @@ rcol = np.clip(rcol, 0, 1)
 rrgb = bdown(rcol * inside[..., None]) / np.maximum(ba[..., None], 1e-6)
 rpx = (np.dstack([np.clip(rrgb, 0, 1), ba]) * 255 + 0.5).astype(np.uint8)
 open("Textures/BadgeRing.tga", "wb").write(bhdr + rpx[..., [2, 1, 0, 3]].tobytes())
+
+# ---- Textures/Blank.tga: fully see-through. Used as a mask it hides whatever it is
+# put on, however the game sets that texture's alpha.
+blank = np.zeros((16, 16, 4), dtype=np.uint8)
+bl_hdr = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, 16, 16, 32, 0x28)
+open("Textures/Blank.tga", "wb").write(bl_hdr + blank.tobytes())
