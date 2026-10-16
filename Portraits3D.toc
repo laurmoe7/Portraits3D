@@ -1,5 +1,5 @@
 ## Interface: 16001
-## Title: Portraits3D
+## Title: 3D Portraits: Forever Frames
 ## Notes: Replaces the flat portraits on the default player, target, focus, pet and party frames with animated 3D models.
 ## Author: laurmoe7
 ## Version: 0.1
