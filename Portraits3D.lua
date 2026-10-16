@@ -87,6 +87,9 @@ local ENTRIES = {
     rest = { "FocusFrame.TargetFrameContainer.Flash", "FocusFrame.TargetFrameContainer.BossPortraitFrameTexture" } },
   { unit = "pet", paths = { "PetPortrait", "PetFrame.Portrait" },
     combat = { "PetFrame.HitIndicator", "PetHitIndicator" },
+    dumpRoot = { "PetFrame" }, bgRoot = "PetFrame",
+    -- the combat flash around the pet frame (round / plate shaped)
+    rest = { "PetFrame.threatIndicator", "PetFrameFlash", "PetFrame.Flash", "PetAttackModeTexture", "PetFrame.PetAttackModeTexture" },
     ringTex = { "PetFrameTexture", "PetFrame.FrameTexture" },
     nameObj = { "PetName", "PetFrame.name" }, manaObj = { "PetFrameManaBar", "PetFrame.manabar" } },
   { unit = "targettarget", paths = { "TargetFrameToT.Portrait", "TargetFrame.totFrame.Portrait", "TargetFrameToTPortrait" },
@@ -205,20 +208,24 @@ end
 
 -- Finds the status / rest / glow pictures somewhere inside a unit frame, in
 -- case they are not at the paths we guessed. Our own frames are skipped.
-local GLOW_WORDS = { "status", "glow", "flash" }
-local function ScanGlows(root, skip, found, depth)
-  if depth > 5 then return end
+local GLOW_WORDS = { "status", "glow", "flash", "attackmode", "incombat" }
+local function ScanGlows(root, skip, found, depth, maxDepth)
+  if depth > (maxDepth or 5) then return end
   for _, region in ipairs({ root:GetRegions() }) do
     local atlas = region.GetAtlas and region:GetAtlas()
-    if type(atlas) == "string" then
-      local lower = atlas:lower()
-      for _, word in ipairs(GLOW_WORDS) do
-        if lower:find(word, 1, true) then found[#found + 1] = region break end
+    local file = region.GetTexture and region:GetTexture()
+    for _, name in ipairs({ type(atlas) == "string" and atlas or false, type(file) == "string" and file or false,
+        region.GetName and region:GetName() or false }) do
+      if name then
+        local lower = name:lower()
+        for _, word in ipairs(GLOW_WORDS) do
+          if lower:find(word, 1, true) then found[#found + 1] = region break end
+        end
       end
     end
   end
   for _, child in ipairs({ root:GetChildren() }) do
-    if child ~= skip then ScanGlows(child, skip, found, depth + 1) end
+    if child ~= skip then ScanGlows(child, skip, found, depth + 1, maxDepth) end
   end
 end
 
@@ -275,15 +282,23 @@ local function ApplyBackground(entry)
   end
 end
 
+local Cover2D -- defined further down
+
 local function Decorate(entry, active)
   local square = DB.square and active
   for _, path in ipairs(entry.level or {}) do
     local obj = Resolve(path)
     if type(obj) == "table" and obj.SetAlpha then Hush(obj, square) end
   end
+  -- Glows are also masked away: the game pulses some of them with an animation,
+  -- which changes their alpha without going through SetAlpha.
+  local function HideGlow(obj)
+    Hush(obj, square)
+    if entry.holder and obj.GetObjectType and obj:GetObjectType() == "Texture" then Cover2D(entry, obj, square) end
+  end
   for _, path in ipairs(entry.rest or {}) do
     local obj = Resolve(path)
-    if type(obj) == "table" and obj.SetAlpha then Hush(obj, square) end
+    if type(obj) == "table" and obj.SetAlpha then HideGlow(obj) end
   end
   for _, path in ipairs(entry.zzz or {}) do
     local obj = Resolve(path)
@@ -327,17 +342,19 @@ local function Decorate(entry, active)
     end
   end
   for _, obj in ipairs(entry.levelFound or {}) do Hush(obj, square) end
-  if entry.unit == "player" and PlayerFrame then
+  local scanRoot = (entry.unit == "player" and PlayerFrame) or (entry.unit == "pet" and PetFrame) or nil
+  if scanRoot then
     if not entry.scanned and entry.holder then
       entry.scanned, entry.scanFound = true, {}
-      pcall(ScanGlows, PlayerFrame, entry.holder, entry.scanFound, 0)
+      -- (pet frame: only its own pictures, not the heal / absorb bars inside it)
+      pcall(ScanGlows, scanRoot, entry.holder, entry.scanFound, 0, entry.unit == "pet" and 0 or nil)
     end
-    for _, obj in ipairs(entry.scanFound or {}) do Hush(obj, square) end
+    for _, obj in ipairs(entry.scanFound or {}) do HideGlow(obj) end
   end
   ApplyBackground(entry)
   if entry.glowTex then
-    local combat = UnitAffectingCombat and UnitAffectingCombat("player")
-    local resting = IsResting and IsResting()
+    local combat = UnitAffectingCombat and UnitAffectingCombat(entry.unit)
+    local resting = entry.unit == "player" and IsResting and IsResting()
     if square and DB.showGlow ~= false and (combat or resting) then
       if combat then entry.glowTex:SetVertexColor(1, 0.25, 0.2) else entry.glowTex:SetVertexColor(1, 0.82, 0.2) end
       entry.glowTex:Show()
@@ -577,7 +594,7 @@ local function Setup(entry)
   local frameTex = border:CreateTexture(nil, "ARTWORK")
   frameTex:SetAllPoints(border)
   frameTex:SetTexture(FRAME_TEXTURE)
-  if entry.unit == "player" then
+  if entry.unit == "player" or entry.unit == "pet" then
     -- Our own resting / combat pulse, shaped to the square frame.
     local glowTex = border:CreateTexture(nil, "BACKGROUND")
     glowTex:SetTexture(GLOW_TEXTURE)
@@ -687,13 +704,28 @@ local function FlatPieces(entry)
     end
     walk(root, 0)
   end
+  -- The round black backdrop behind a flat portrait is a plain colour picture in the
+  -- frame itself; it showed through a transparent gradient as a dark circle.
+  local bgPath = entry.bgRoot or ((entry.unit == "targettarget" or entry.unit:match("^party")) and entry.root)
+  local bgRoot = bgPath and Resolve(bgPath)
+  if type(bgRoot) == "table" and bgRoot.GetRegions then
+    for _, region in ipairs({ bgRoot:GetRegions() }) do
+      local atlas = region.GetAtlas and region:GetAtlas()
+      local file = region.GetTexture and region:GetTexture()
+      if region.SetAlpha and not atlas and type(file) == "number" and file <= 0 then
+        local known = false
+        for _, have in ipairs(list) do if have == region then known = true end end
+        if not known then list[#list + 1] = region end
+      end
+    end
+  end
   entry.flatPieces = list
   return list
 end
 
 -- Hiding by alpha is not always enough (target of target kept its flat portrait):
 -- an empty mask on the picture hides it whatever the game does with its alpha.
-local function Cover2D(entry, piece, on)
+function Cover2D(entry, piece, on)
   if not piece.AddMaskTexture then return end
   entry.covers = entry.covers or {}
   local mask = entry.covers[piece]
@@ -786,8 +818,8 @@ end
 -- Blizzard's own is kept invisible. Offsets are fractions of the border's own
 -- width / height.
 local DECO_STYLE = {
-  normal = { x = 0.10, y = 0.11, size = 0.99 },
-  boss = { x = 0.20, y = 0.06, size = 0.99 },
+  normal = { x = 0.00, y = 0.02, size = 0.99 },
+  boss = { x = 0.11, y = -0.04, size = 0.99 },
 }
 local function DecoKind(atlas)
   return (atlas and tostring(atlas):find("Winged")) and "boss" or "normal"
@@ -799,11 +831,32 @@ local function DecoEntry()
   end
 end
 
+-- Border test (temporary, not saved): forces the game's elite / rare / boss border
+-- on the target frame so it can be lined up by hand.
+local TEST = { deco = "off", decoX = 0.00, decoY = 0.02, decoSize = 0.99 }
+local TEST_ATLAS = {
+  elite = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold",
+  rare = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Rare-Silver",
+  boss = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold-Winged",
+}
+local testForced = false
+
 local function UpdateDeco()
   local entry = DecoEntry()
   if not entry or not entry.holder then return end
   local deco = Resolve("TargetFrame.TargetFrameContainer.BossPortraitFrameTexture")
   if type(deco) ~= "table" or not deco.SetAtlas then return end
+  local testing = TEST.deco ~= "off"
+  if testing then
+    Hush(deco, false)
+    pcall(deco.SetAtlas, deco, TEST_ATLAS[TEST.deco], true)
+    deco:SetAlpha(1)
+    deco:Show()
+    testForced = true
+  elseif testForced then
+    testForced = false
+    deco:Hide()
+  end
   local ov = entry.decoOverlay
   local atlas = deco.GetAtlas and deco:GetAtlas()
   local live = DB.square and DB.enabled and entry.border and entry.holder:IsShown()
@@ -812,13 +865,18 @@ local function UpdateDeco()
     if ov then ov:Hide() end
     return
   end
+  -- Measure the game's border at the picture's own size, as it was when the offsets
+  -- below were worked out; the game can resize it for other frame sizes.
+  pcall(deco.SetAtlas, deco, atlas, true)
   local dw, dh = deco:GetSize()
   local dx, dy = 0, 0
   local dcx, dcy = deco:GetCenter()
   local pcx, pcy = entry.portrait:GetCenter()
   if dcx and pcx then dx, dy = dcx - pcx, dcy - pcy end
   local sq = Opt(entry, "squareSize")
-  local style = DECO_STYLE[DecoKind(atlas)]
+  local kind = DecoKind(atlas)
+  local style = testing and { x = TEST.decoX, y = TEST.decoY, size = TEST.decoSize }
+    or (DB.decoStyle and DB.decoStyle[kind]) or DECO_STYLE[kind]
   if not ov then
     ov = CreateFrame("Frame", nil, entry.holder)
     ov.tex = ov:CreateTexture(nil, "OVERLAY")
@@ -835,6 +893,9 @@ local function UpdateDeco()
   ov.tex:SetPoint("CENTER", entry.portrait, "CENTER", dx * sq + style.x * dw + shift, dy * sq + style.y * dh)
   ov:Show()
   Hush(deco, true)
+  entry.decoInfo = string.format("%s style x=%.2f y=%.2f size=%.2f | atlas=%s size=%.0fx%.0f offset=%.1f,%.1f square=%.2f framePos=%.2f scales deco=%.2f portrait=%.2f holder=%.2f",
+    kind, style.x, style.y, style.size, tostring(atlas), dw, dh, dx, dy, sq, Opt(entry, "frameX") or 0,
+    deco:GetEffectiveScale() or 0, entry.portrait:GetEffectiveScale() or 0, entry.holder:GetEffectiveScale() or 0)
 end
 
 local function RefreshAll(force)
@@ -908,6 +969,118 @@ local ANIMATIONS = {
   { key = "basic", label = "Basic idle only" },
   { key = "still", label = "No animation" },
 }
+
+-- Temporary window for lining up the elite / rare / boss border by hand.
+local borderTest
+local function ToggleBorderTest()
+  if borderTest then
+    borderTest:SetShown(not borderTest:IsShown())
+    return
+  end
+  local ok, f = pcall(CreateFrame, "Frame", "Portraits3DBorderTest", UIParent, "BackdropTemplate")
+  if not ok then f = CreateFrame("Frame", "Portraits3DBorderTest", UIParent) end
+  borderTest = f
+  f:SetSize(330, 360)
+  f:SetPoint("CENTER", UIParent, "CENTER", -120, 120)
+  f:SetFrameStrata("DIALOG")
+  f:SetFrameLevel(60)
+  f:SetClampedToScreen(true)
+  f:SetMovable(true)
+  f:EnableMouse(true)
+  f:RegisterForDrag("LeftButton")
+  f:SetScript("OnDragStart", f.StartMoving)
+  f:SetScript("OnDragStop", f.StopMovingOrSizing)
+  if f.SetBackdrop then
+    f:SetBackdrop({
+      bgFile = "Interface/DialogFrame/UI-DialogBox-Background",
+      edgeFile = "Interface/DialogFrame/UI-DialogBox-Border",
+      tile = true, tileSize = 32, edgeSize = 32,
+      insets = { left = 8, right = 8, top = 8, bottom = 8 },
+    })
+  end
+  tinsert(UISpecialFrames, "Portraits3DBorderTest")
+  local title = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+  title:SetPoint("TOPLEFT", 22, -18)
+  title:SetText("Border test")
+  CreateFrame("Button", nil, f, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -6, -6)
+
+  local refreshers = {}
+  local modes = { { "off", "None" }, { "elite", "Elite" }, { "rare", "Rare" }, { "boss", "Boss" } }
+  for i, mode in ipairs(modes) do
+    local box = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    box:SetSize(24, 24)
+    box:SetPoint("TOPLEFT", 16 + (i - 1) * 80, -48)
+    local text = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    text:SetPoint("LEFT", box, "RIGHT", 0, 0)
+    text:SetText(mode[2])
+    box:SetScript("OnClick", function()
+      TEST.deco = mode[1]
+      local kind = mode[1] == "boss" and "boss" or "normal"
+      local style = (DB.decoStyle and DB.decoStyle[kind]) or DECO_STYLE[kind]
+      TEST.decoX, TEST.decoY, TEST.decoSize = style.x, style.y, style.size
+      UpdateDeco()
+      for _, r in ipairs(refreshers) do r() end
+    end)
+    refreshers[#refreshers + 1] = function() box:SetChecked(TEST.deco == mode[1]) end
+  end
+
+  local function AddTestSlider(key, label, lo, hi, y)
+    local text = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    text:SetPoint("TOPLEFT", 24, y)
+    text:SetText(label)
+    local value = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    value:SetPoint("TOPLEFT", 24, y)
+    value:SetWidth(282)
+    value:SetJustifyH("RIGHT")
+    local slider = CreateFrame("Slider", nil, f, "OptionsSliderTemplate")
+    slider:SetSize(282, 16)
+    slider:SetPoint("TOPLEFT", 24, y - 18)
+    slider:SetMinMaxValues(lo, hi)
+    slider:SetValueStep(0.01)
+    slider:SetObeyStepOnDrag(true)
+    pcall(function() slider.Low:SetText(""); slider.High:SetText(""); slider.Text:Hide() end)
+    slider:SetScript("OnValueChanged", function(self, v)
+      v = math.floor(v / 0.01 + 0.5) * 0.01
+      value:SetText(string.format("%.2f", v))
+      if self.syncing or math.abs(TEST[key] - v) < 1e-6 then return end
+      TEST[key] = v
+      UpdateDeco()
+    end)
+    refreshers[#refreshers + 1] = function()
+      slider.syncing = true
+      slider:SetValue(TEST[key])
+      slider.syncing = false
+      value:SetText(string.format("%.2f", TEST[key]))
+    end
+  end
+  AddTestSlider("decoX", "Left / right", -0.5, 0.5, -90)
+  AddTestSlider("decoY", "Up / down", -0.5, 0.5, -136)
+  AddTestSlider("decoSize", "Size", 0.5, 1.5, -182)
+
+  local save = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+  save:SetSize(200, 24)
+  save:SetPoint("TOPLEFT", 24, -236)
+  save:SetText("Use these numbers")
+  save:SetScript("OnClick", function()
+    if TEST.deco == "off" then
+      print("|cff66ccffPortraits3D|r pick Elite, Rare or Boss first")
+      return
+    end
+    local kind = TEST.deco == "boss" and "boss" or "normal"
+    DB.decoStyle = DB.decoStyle or {}
+    DB.decoStyle[kind] = { x = TEST.decoX, y = TEST.decoY, size = TEST.decoSize }
+    print(string.format("|cff66ccffPortraits3D|r saved for %s borders: x=%.2f y=%.2f size=%.2f (also tell Claude these numbers)",
+      kind, TEST.decoX, TEST.decoY, TEST.decoSize))
+  end)
+  local note = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+  note:SetPoint("TOPLEFT", 24, -272)
+  note:SetWidth(282)
+  note:SetJustifyH("LEFT")
+  note:SetTextColor(0.75, 0.75, 0.75)
+  note:SetText("Needs the rounded square frame on and a target selected. Elite and Rare use one setting, Boss its own. Turn it off with No border or /reload.")
+  f:SetScript("OnShow", function() for _, r in ipairs(refreshers) do r() end end)
+  for _, r in ipairs(refreshers) do r() end
+end
 
 local COLUMN = 322 -- distance between the two columns of the window
 local SetMinimapHidden = function() end -- replaced below, once the minimap button exists
@@ -1186,6 +1359,12 @@ local function BuildWindow()
   AddSection("ANIMATION", -512, 76)
   AddChoices(ANIMATIONS, -538, function() return DB.anim end, SetAnimationMode)
 
+  local borderBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+  borderBtn:SetSize(140, 22)
+  borderBtn:SetPoint("BOTTOMLEFT", 24, 14)
+  borderBtn:SetText("Border test")
+  borderBtn:SetScript("OnClick", ToggleBorderTest)
+
   local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   reset:SetSize(140, 22)
   reset:SetPoint("BOTTOMRIGHT", -24, 14)
@@ -1377,10 +1556,25 @@ local function Dump(unit)
       end
     end
   end
-  for _, list in ipairs({ entry.ring or {}, entry.content or {} }) do
+  for _, list in ipairs({ entry.ring or {}, entry.content or {}, entry.dumpRoot or {} }) do
     for _, path in ipairs(list) do
       local obj = Resolve(path)
-      if type(obj) == "table" then walk(obj, path:match("[^%.]+$"), 0) end
+      if type(obj) == "table" then
+        walk(obj, path:match("[^%.]+$"), 0)
+        -- unnamed pictures directly in the frame (named only by their file or atlas)
+        if obj.GetRegions then
+          for i, region in ipairs({ obj:GetRegions() }) do
+            local atlas = region.GetAtlas and region:GetAtlas()
+            local file = region.GetTexture and region:GetTexture()
+            if atlas or file then
+              lines = lines + 1
+              Say(string.format("%s region %d  %s  %s  alpha=%.1f shown=%s", path:match("[^%.]+$"), i,
+                atlas and ("atlas=" .. tostring(atlas)) or "", file and ("file=" .. tostring(file)) or "",
+                region.GetAlpha and region:GetAlpha() or 0, tostring(region.IsShown and region:IsShown())))
+            end
+          end
+        end
+      end
     end
   end
   Say(lines .. " pieces listed")
@@ -1433,6 +1627,22 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
       Dump(rest ~= "" and rest or "player")
     elseif sub == "debug" then
       Debug()
+    elseif sub == "deco" then
+      -- /p3d dev deco                      shows the numbers in use
+      -- /p3d dev deco <normal|boss> x y size   changes them (saved); "reset" clears
+      local kind, x, y, size = rest:match("^(%a+)%s+(-?[%d%.]+)%s+(-?[%d%.]+)%s+([%d%.]+)$")
+      if kind and (kind == "normal" or kind == "boss") then
+        DB.decoStyle = DB.decoStyle or {}
+        DB.decoStyle[kind] = { x = tonumber(x), y = tonumber(y), size = tonumber(size) }
+        UpdateDeco()
+      elseif rest == "reset" then
+        DB.decoStyle = nil
+        UpdateDeco()
+      end
+      local entry = DecoEntry()
+      Say(entry and entry.decoInfo or "no border drawn right now (target an elite, square frame on)")
+    elseif sub == "bordertest" then
+      ToggleBorderTest()
     elseif sub == "tot" then
       for _, entry in ipairs(ENTRIES) do
         if entry.unit == "targettarget" and entry.portrait then
@@ -1443,7 +1653,7 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
         end
       end
     else
-      Say("/p3d dev testparty | dump <unit> | debug")
+      Say("/p3d dev testparty | dump <unit> | debug | tot | deco")
     end
   elseif cmd == "" or cmd == "options" or cmd == "config" then
     ToggleWindow()
