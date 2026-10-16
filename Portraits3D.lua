@@ -831,8 +831,8 @@ local function DecoEntry()
   end
 end
 
--- Border test (temporary, not saved): forces the game's elite / rare / boss border
--- on the target frame so it can be lined up by hand.
+-- Elite border mover (not saved until "Use these numbers"): forces the game's elite /
+-- rare / boss border on the target frame so it can be lined up by hand.
 local TEST = { deco = "off", decoX = 0.00, decoY = 0.02, decoSize = 0.99 }
 local TEST_ATLAS = {
   elite = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold",
@@ -970,7 +970,7 @@ local ANIMATIONS = {
   { key = "still", label = "No animation" },
 }
 
--- Temporary window for lining up the elite / rare / boss border by hand.
+-- Window for lining up the elite / rare / boss border by hand.
 local borderTest
 local function ToggleBorderTest()
   if borderTest then
@@ -1001,7 +1001,7 @@ local function ToggleBorderTest()
   tinsert(UISpecialFrames, "Portraits3DBorderTest")
   local title = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
   title:SetPoint("TOPLEFT", 22, -18)
-  title:SetText("Border test")
+  title:SetText("Elite border mover")
   CreateFrame("Button", nil, f, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -6, -6)
 
   local refreshers = {}
@@ -1077,7 +1077,7 @@ local function ToggleBorderTest()
   note:SetWidth(282)
   note:SetJustifyH("LEFT")
   note:SetTextColor(0.75, 0.75, 0.75)
-  note:SetText("Needs the rounded square frame on and a target selected. Elite and Rare use one setting, Boss its own. Turn it off with No border or /reload.")
+  note:SetText("Moves the elite, rare and boss border on your target frame. Needs the rounded square frame. Pick a border type, move it, then Use these numbers. Elite and Rare share one setting, Boss has its own. None turns the preview off.")
   f:SetScript("OnShow", function() for _, r in ipairs(refreshers) do r() end end)
   for _, r in ipairs(refreshers) do r() end
 end
@@ -1360,9 +1360,9 @@ local function BuildWindow()
   AddChoices(ANIMATIONS, -538, function() return DB.anim end, SetAnimationMode)
 
   local borderBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  borderBtn:SetSize(140, 22)
+  borderBtn:SetSize(150, 22)
   borderBtn:SetPoint("BOTTOMLEFT", 24, 14)
-  borderBtn:SetText("Border test")
+  borderBtn:SetText("Elite border mover")
   borderBtn:SetScript("OnClick", ToggleBorderTest)
 
   local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
