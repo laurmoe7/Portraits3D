@@ -13,7 +13,9 @@ local addonName = ...
 local DEFAULTS = { enabled = true, scale = 0.85, zoom = 1, petScale = 0.85, petZoom = 1,
   targetScale = 0.85, targetZoom = 1, partyScale = 0.85, partyZoom = 1, partySquareSize = 1.04, anim = "full",
   hideMinimap = false, square = false, squareSize = 1.04, targetSquareSize = 1.04, petSquareSize = 1.04, background = "black",
-  borderColor = "gold", showBadge = true, showGlow = true, showZzz = true, gradient = 1, universal = false,
+  borderColor = "gold", showBadge = true, showGlow = true, showZzz = true, greyDead = true, hideCombatText = false, gradient = 1, gradientAlpha = 1,
+  turn = 0, targetTurn = 0, partyTurn = 0, petTurn = 0,
+  frameX = 0, targetFrameX = 0, partyFrameX = 0, petFrameX = 0, universal = false,
   offX = 0, offY = 0, targetOffX = 0, targetOffY = 0, partyOffX = 0, partyOffY = 0, petOffX = 0, petOffY = 0 }
 
 -- Rounded-square border (Textures\RoundedFrame.tga, made by tools\make_frame.py).
@@ -55,6 +57,9 @@ local ENTRIES = {
     -- the pulsing resting / combat glow around the portrait
     -- the rising Zzz in a rested area; hidden by the "Resting Zzz" option
     zzz = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PlayerRestLoop" },
+    -- the floating damage / healing numbers shown over the portrait
+    combat = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.HitIndicator",
+               "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.HitIndicator", "PlayerHitIndicator" },
     rest = { "PlayerFrame.PlayerFrameContainer.FrameFlash",
              "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PlayerPortraitCornerIcon",
              "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.StatusTexture",
@@ -78,6 +83,7 @@ local ENTRIES = {
     ring = { "FocusFrame.TargetFrameContainer" }, content = { "FocusFrame.TargetFrameContent" },
     rest = { "FocusFrame.TargetFrameContainer.Flash", "FocusFrame.TargetFrameContainer.BossPortraitFrameTexture" } },
   { unit = "pet", paths = { "PetPortrait", "PetFrame.Portrait" },
+    combat = { "PetFrame.HitIndicator", "PetHitIndicator" },
     ringTex = { "PetFrameTexture", "PetFrame.FrameTexture" },
     nameObj = { "PetName", "PetFrame.name" }, manaObj = { "PetFrameManaBar", "PetFrame.manabar" } },
   { unit = "targettarget", paths = { "TargetFrameToT.Portrait", "TargetFrame.totFrame.Portrait", "TargetFrameToTPortrait" },
@@ -248,13 +254,14 @@ local function ApplyBackground(entry)
     end
   end
   local topAlpha = fade and 0 or 1
+  local bottomAlpha = fade and (DB.gradientAlpha or 1) or 1 -- the gradient's opacity setting
   bg:SetColorTexture(1, 1, 1, 1)
   local ok = CreateColor and pcall(bg.SetGradient, bg, "VERTICAL",
-    CreateColor(r, g, b, 1), CreateColor(r, g, b, topAlpha))
+    CreateColor(r, g, b, bottomAlpha), CreateColor(r, g, b, topAlpha))
   if not ok then
     -- older gradient call; if that fails too, a flat color
-    if not pcall(bg.SetGradientAlpha, bg, "VERTICAL", r, g, b, 1, r, g, b, topAlpha) then
-      bg:SetColorTexture(r, g, b, 1)
+    if not pcall(bg.SetGradientAlpha, bg, "VERTICAL", r, g, b, bottomAlpha, r, g, b, topAlpha) then
+      bg:SetColorTexture(r, g, b, bottomAlpha)
     end
   end
 end
@@ -292,6 +299,10 @@ local function Decorate(entry, active)
   for _, path in ipairs(entry.zzz or {}) do
     local obj = Resolve(path)
     if type(obj) == "table" and obj.SetAlpha then Hush(obj, active and DB.showZzz == false) end
+  end
+  for _, path in ipairs(entry.combat or {}) do
+    local obj = Resolve(path)
+    if type(obj) == "table" and obj.SetAlpha then Hush(obj, DB.hideCombatText == true) end
   end
   if entry.badge and not entry.levelScanned then
     entry.levelScanned, entry.levelFound = true, {}
@@ -393,7 +404,7 @@ local function Layout(entry)
     entry.border:SetSize(size, size)
     -- Shifted towards the bars (right for player and pet, left for target and
     -- focus) so it covers the part of the ring the mask leaves.
-    local shift = (entry.side == "right" and -1 or 1) * w * PLAQUE_SHIFT
+    local shift = (entry.side == "right" and -1 or 1) * w * (PLAQUE_SHIFT + (Opt(entry, "frameX") or 0))
     entry.border:ClearAllPoints()
     entry.border:SetPoint("CENTER", entry.portrait, "CENTER", shift, 0)
     clip:ClearAllPoints()
@@ -503,6 +514,8 @@ local function ApplyCamera(entry)
   local zoom = Opt(entry, "zoom") or 1
   pcall(model.SetCamDistanceScale, model, zoom > 1 and 1 / zoom or 1)
   pcall(model.SetPortraitZoom, model, math.min(zoom, 1))
+  -- Turn: rotates the model about its vertical axis (degrees; 0 = the game's default).
+  pcall(model.SetFacing, model, math.rad(Opt(entry, "turn") or 0))
   -- Left / right and up / down: moves the model within its frame.
   pcall(model.SetPosition, model, 0, -(Opt(entry, "offX") or 0), Opt(entry, "offY") or 0)
   -- "full" leaves the animation alone: the model plays all its idles by itself.
@@ -636,6 +649,20 @@ end
 
 local testParty = false -- /p3d testparty: party frames show the player's model
 
+-- Dead, ghost and offline units are shown grey and dimmed, like the game's own
+-- portraits.
+local function ApplyLook(entry, unit)
+  local grey = false
+  if DB.greyDead ~= false then
+    local ok, dead = pcall(UnitIsDeadOrGhost, unit)
+    grey = ok and dead == true
+  end
+  if entry.greyed == grey then return end
+  entry.greyed = grey
+  pcall(entry.model.SetDesaturation, entry.model, grey and 1 or 0)
+  pcall(entry.model.SetAlpha, entry.model, grey and 0.75 or 1)
+end
+
 local function Refresh(entry, force)
   if not Setup(entry) then return end
   local unit = entry.unit
@@ -645,6 +672,7 @@ local function Refresh(entry, force)
     return
   end
   Decorate(entry, true)
+  ApplyLook(entry, unit)
   local state = (UnitGUID(unit) or "?") .. ":" .. tostring(UnitIsDead(unit) and true or false)
   if entry.state == state and not force then return end
   entry.state = state
@@ -656,8 +684,16 @@ local function Refresh(entry, force)
   ApplyCamera(entry) -- before SetUnit, the way other portrait addons do it
   model:SetUnit(unit)
   ApplyCamera(entry)
+  entry.greyed = nil -- a new model starts in colour
+  ApplyLook(entry, unit)
   -- The model loads a moment later and can reset the camera; apply again.
-  C_Timer.After(0.2, function() if entry.holder:IsShown() then ApplyCamera(entry) end end)
+  C_Timer.After(0.2, function()
+    if entry.holder:IsShown() then
+      ApplyCamera(entry)
+      entry.greyed = nil
+      ApplyLook(entry, unit)
+    end
+  end)
   entry.portrait:SetAlpha(0)
 end
 
@@ -712,7 +748,8 @@ local function UpdateDeco()
   local scaled = sq * style.size
   ov.tex:SetSize(dw * scaled, dh * scaled)
   ov.tex:ClearAllPoints()
-  ov.tex:SetPoint("CENTER", entry.portrait, "CENTER", dx * sq + style.x * dw, dy * sq + style.y * dh)
+  local shift = (entry.side == "right" and -1 or 1) * entry.holder:GetWidth() * (Opt(entry, "frameX") or 0)
+  ov.tex:SetPoint("CENTER", entry.portrait, "CENTER", dx * sq + style.x * dw + shift, dy * sq + style.y * dh)
   ov:Show()
   Hush(deco, true)
 end
@@ -747,6 +784,7 @@ local function SetNumber(key, n)
   DB[key] = n
   for _, entry in ipairs(ENTRIES) do
     Layout(entry)
+    if key == "gradientAlpha" then ApplyBackground(entry) end
     if entry.model and entry.holder:IsShown() then ApplyCamera(entry) end
   end
 end
@@ -807,7 +845,7 @@ local SIZE_GROUPS = {
 local function BuildWindow()
   local ok, f = pcall(CreateFrame, "Frame", "Portraits3DOptions", UIParent, "BackdropTemplate")
   if not ok then f = CreateFrame("Frame", "Portraits3DOptions", UIParent) end
-  f:SetSize(660, 504)
+  f:SetSize(660, 632)
   f:SetPoint("CENTER", UIParent, "CENTER", 200, 0) -- out of the way of the unit frames
   f:SetFrameStrata("DIALOG")
   f:SetClampedToScreen(true)
@@ -873,6 +911,7 @@ local function BuildWindow()
   -- returns it (the size card edits a different setting per frame group).
   local function AddSlider(key, label, lo, hi, y, step, showIf)
     local function Key() return type(key) == "function" and key() or key end
+    local fmt = step >= 1 and "%d°" or "%.2f" -- whole numbers are degrees
     local text = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     text:SetPoint("TOPLEFT", 30 + colX, y)
     text:SetText(label)
@@ -889,7 +928,7 @@ local function BuildWindow()
     pcall(function() slider.Low:SetText(""); slider.High:SetText(""); slider.Text:Hide() end)
     slider:SetScript("OnValueChanged", function(self, v)
       v = math.floor(v / step + 0.5) * step
-      value:SetText(string.format("%.2f", v))
+      value:SetText(string.format(fmt, v))
       if self.syncing or math.abs((DB[Key()] or 0) - v) < 1e-6 then return end
       SetNumber(Key(), v)
     end)
@@ -897,7 +936,7 @@ local function BuildWindow()
       slider.syncing = true
       slider:SetValue(DB[Key()] or 0)
       slider.syncing = false
-      value:SetText(string.format("%.2f", DB[Key()] or 0))
+      value:SetText(string.format(fmt, DB[Key()] or 0))
       if showIf then
         local show = showIf()
         text:SetShown(show); value:SetShown(show); slider:SetShown(show)
@@ -938,20 +977,27 @@ local function BuildWindow()
   FrameCheck("party", 28, -196)
   FrameCheck("pet", 178, -196)
 
-  AddSection("FRAME STYLE", -230, 76)
+  AddSection("FRAME STYLE", -230, 98)
   AddCheck("Level badge", 28, -256, function() return DB.showBadge ~= false end,
     function(on) DB.showBadge = on; RefreshAll(true) end)
   AddCheck("Resting / combat glow", 140, -256, function() return DB.showGlow ~= false end,
     function(on) DB.showGlow = on; RefreshAll(true) end)
+  AddCheck("Grey when dead", 140, -278, function() return DB.greyDead ~= false end,
+    function(on) DB.greyDead = on; RefreshAll(true) end)
   AddCheck("Resting Zzz", 28, -278, function() return DB.showZzz ~= false end,
     function(on) DB.showZzz = on; RefreshAll(true) end)
 
-  AddSection("BACKGROUND", -312, 122)
-  AddChoices(BACKGROUNDS, -338, function() return DB.background or "black" end, SetBackground)
-  AddSlider("gradient", "Gradient height", 0.1, 1, -386, 0.05, function()
+  AddCheck("Hide combat text", 28, -300, function() return DB.hideCombatText == true end,
+    function(on) DB.hideCombatText = on; RefreshAll(true) end)
+
+  AddSection("BACKGROUND", -334, 168)
+  AddChoices(BACKGROUNDS, -360, function() return DB.background or "black" end, SetBackground)
+  local function IsGradient()
     local mode = DB.background or "black"
     return mode == "gradient" or mode == "class"
-  end)
+  end
+  AddSlider("gradient", "Gradient height", 0.1, 1, -408, 0.05, IsGradient)
+  AddSlider("gradientAlpha", "Gradient opacity", 0.1, 1, -454, 0.05, IsGradient)
 
   -- ===== Right column =====
   colX = COLUMN
@@ -968,7 +1014,7 @@ local function BuildWindow()
     return prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))
   end
   
-  AddSection("SIZE & POSITION", -44, 332)
+  AddSection("SIZE & POSITION", -44, 462)
   AddCheck("Same for all frames", 28, -70, function() return DB.universal end,
     function(on)
       DB.universal = on
@@ -1021,14 +1067,31 @@ local function BuildWindow()
     end
     covers:SetText(text)
   end
-  AddSlider(function() return K("scale") end, "Model size", 0.5, 1.2, -150, 0.05, IsRound)
-  AddSlider(function() return K("squareSize") end, "Frame size", 0.8, 1.25, -150, 0.05, IsSquare)
-  AddSlider(function() return K("zoom") end, "Camera zoom", 0, 2, -196, 0.05)
-  AddSlider(function() return K("offX") end, "Model left / right", -0.5, 0.5, -242, 0.01)
-  AddSlider(function() return K("offY") end, "Model up / down", -0.5, 0.5, -288, 0.01)
+  -- A small heading with a thin line, to group the sliders.
+  local function AddHeading(label, y)
+    local text = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+    text:SetPoint("TOPLEFT", 30 + colX, y)
+    text:SetText(label)
+    text:SetTextColor(1, 0.82, 0, 0.9)
+    local line = f:CreateTexture(nil, "ARTWORK")
+    line:SetColorTexture(1, 1, 1, 0.14)
+    line:SetPoint("TOPLEFT", 30 + colX, y - 14)
+    line:SetSize(262, 1)
+  end
 
-  AddSection("ANIMATION", -382, 76)
-  AddChoices(ANIMATIONS, -408, function() return DB.anim end, SetAnimationMode)
+  AddHeading("FRAME", -152)
+  AddSlider(function() return K("scale") end, "Model size", 0.5, 1.2, -172, 0.05, IsRound)
+  AddSlider(function() return K("squareSize") end, "Frame size", 0.8, 1.25, -172, 0.05, IsSquare)
+  AddSlider(function() return K("frameX") end, "Frame position", -0.5, 0.5, -218, 0.01, IsSquare)
+  AddHeading("CAMERA", -268)
+  AddSlider(function() return K("zoom") end, "Zoom", 0, 2, -288, 0.05)
+  AddSlider(function() return K("turn") end, "Turn", -90, 90, -334, 5)
+  AddHeading("MODEL POSITION", -384)
+  AddSlider(function() return K("offX") end, "Left / right", -0.5, 0.5, -404, 0.01)
+  AddSlider(function() return K("offY") end, "Up / down", -0.5, 0.5, -450, 0.01)
+
+  AddSection("ANIMATION", -512, 76)
+  AddChoices(ANIMATIONS, -538, function() return DB.anim end, SetAnimationMode)
 
   local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   reset:SetSize(130, 22)
@@ -1040,11 +1103,12 @@ local function BuildWindow()
     DB.universal = DEFAULTS.universal
     SetBackground(DEFAULTS.background)
     DB.borderColor, DB.showBadge, DB.showGlow = DEFAULTS.borderColor, DEFAULTS.showBadge, DEFAULTS.showGlow
-    DB.showZzz = DEFAULTS.showZzz
+    DB.showZzz, DB.greyDead, DB.hideCombatText = DEFAULTS.showZzz, DEFAULTS.greyDead, DEFAULTS.hideCombatText
     SetNumber("gradient", DEFAULTS.gradient)
+    SetNumber("gradientAlpha", DEFAULTS.gradientAlpha)
     SetSquare(DEFAULTS.square)
     for _, prefix in ipairs({ "", "target", "party", "pet" }) do
-      for _, name in ipairs({ "scale", "zoom", "squareSize", "offX", "offY" }) do
+      for _, name in ipairs({ "scale", "zoom", "squareSize", "offX", "offY", "turn", "frameX" }) do
         local key = prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))
         SetNumber(key, DEFAULTS[key])
       end
@@ -1154,12 +1218,14 @@ local function BuildPanel()
   sub:SetPoint("TOP", title, "BOTTOM", 0, -8)
   sub:SetText("3D unit frame portraits")
 
-  local open = CreateFrame("Button", nil, panel)
-  open:SetNormalFontObject("GameFontHighlightHuge")
-  open:SetHighlightFontObject("GameFontNormalHuge")
-  open:SetText("Open options  (/p3d)")
-  open:SetSize(open:GetTextWidth() + 20, 40)
+  local open = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  open:SetSize(260, 44)
+  open:SetText("Open options")
+  pcall(function() open:GetFontString():SetFontObject("GameFontNormalLarge") end)
   open:SetPoint("TOP", sub, "BOTTOM", 0, -60)
+  local hint = panel:CreateFontString(nil, "ARTWORK", "GameFontDisable")
+  hint:SetPoint("TOP", open, "BOTTOM", 0, -8)
+  hint:SetText("or type /p3d")
   open:SetScript("OnClick", ToggleWindow)
 
   if Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory then
