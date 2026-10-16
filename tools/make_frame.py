@@ -36,12 +36,12 @@ def lerp(a, b, f):
     f = np.clip(f, 0, 1)[..., None]
     return np.array(a) * (1 - f) + np.array(b) * f
 
-GOLD = np.array((0.72, 0.55, 0.32))
+GOLD = np.array((0.76, 0.61, 0.40))
 def lit(s):                                # gold shaded by the light
     return GOLD * np.clip(0.85 + 0.35 * s, 0.45, 1.25)[..., None]
 
 # bronze body: lighter towards the top, with a little of the edge lighting
-body = lerp((0.30, 0.185, 0.105), (0.20, 0.12, 0.07), (y + 1) / 2) * np.clip(0.95 + 0.10 * s_out, 0.85, 1.1)[..., None]
+body = lerp((0.40, 0.275, 0.14), (0.27, 0.18, 0.09), (y + 1) / 2) * np.clip(0.95 + 0.10 * s_out, 0.85, 1.1)[..., None]
 col = body
 col = np.where(((t >= 0.007) & (t < 0.026))[..., None], lit(s_out), col)
 col = np.where(((t >= 0.026) & (t < 0.036))[..., None], np.array((0.07, 0.03, 0.01)), col)
@@ -159,3 +159,18 @@ brgb = bdown(bcol * inside[..., None]) / np.maximum(ba[..., None], 1e-6)
 bpx = (np.dstack([np.clip(brgb, 0, 1), ba]) * 255 + 0.5).astype(np.uint8)
 bhdr = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, BS, BS, 32, 0x28)
 open("Textures/BadgeDisc.tga", "wb").write(bhdr + bpx[..., [2, 1, 0, 3]].tobytes())
+
+# ---- Textures/BadgeRing.tga: the level circle's ring, a full round disc (the
+# centre picture covers its middle). Tan bronze, lighter at the top, with the
+# official circle's highlight on the upper left and a shadow on the lower right.
+ang = np.arctan2(-by, bx)                                   # 0 = right, up positive
+light = np.cos(ang - np.radians(135))                       # 1 towards the upper left
+vert = ((by + 1) / 2)[..., None]                            # 0 top .. 1 bottom
+base = np.array((0.74, 0.62, 0.46)) * (1 - vert) + np.array((0.50, 0.39, 0.27)) * vert
+glint = np.clip((light - 0.55) / 0.45, 0, 1) ** 1.5 * np.clip((rad - 0.7) / 0.3, 0, 1)
+shade = np.clip((-light - 0.2) / 0.8, 0, 1)
+rcol = base * (1 + 0.38 * glint[..., None] - 0.22 * shade[..., None])
+rcol = np.clip(rcol, 0, 1)
+rrgb = bdown(rcol * inside[..., None]) / np.maximum(ba[..., None], 1e-6)
+rpx = (np.dstack([np.clip(rrgb, 0, 1), ba]) * 255 + 0.5).astype(np.uint8)
+open("Textures/BadgeRing.tga", "wb").write(bhdr + rpx[..., [2, 1, 0, 3]].tobytes())

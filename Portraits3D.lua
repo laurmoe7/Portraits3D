@@ -551,8 +551,10 @@ local function Setup(entry)
       return tex
     end
     Layer(0, 0, 0.03, 0.02, 0.01, 0.55)
-    local ring = Layer(0.5, 1, 0.62, 0.50, 0.36)
-    pcall(function() ring:SetGradient("VERTICAL", CreateColor(0.50, 0.39, 0.27, 1), CreateColor(0.74, 0.62, 0.46, 1)) end)
+    local ring = badge:CreateTexture(nil, "ARTWORK", nil, 1)
+    ring:SetPoint("TOPLEFT", 0.5, -0.5)
+    ring:SetPoint("BOTTOMRIGHT", -0.5, 0.5)
+    ring:SetTexture("Interface/AddOns/Portraits3D/Textures/BadgeRing")
     local disc = badge:CreateTexture(nil, "ARTWORK", nil, 2)
     disc:SetPoint("TOPLEFT", 2, -2)
     disc:SetPoint("BOTTOMRIGHT", -2, 2)
