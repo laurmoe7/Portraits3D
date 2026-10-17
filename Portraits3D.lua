@@ -1136,7 +1136,7 @@ local function BuildWindow()
 
   local title = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
   title:SetPoint("TOPLEFT", 22, -20)
-  title:SetText("3D Portraits: Forever Frames")
+  title:SetText("Portraits 3D: Forever Frames")
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", -6, -6)
 
@@ -1411,7 +1411,7 @@ local function BuildWindow()
   reset:SetScript("OnClick", function()
     if StaticPopupDialogs and StaticPopup_Show then
       StaticPopupDialogs["PORTRAITS3D_RESET"] = {
-        text = "Reset every 3D Portraits setting to its default?",
+        text = "Reset every Portraits 3D setting to its default?",
         button1 = YES or "Yes", button2 = NO or "No",
         OnAccept = DoReset, timeout = 0, whileDead = true, hideOnEscape = true,
       }
@@ -1503,7 +1503,7 @@ local function BuildMinimapButton()
   end)
   button:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-    GameTooltip:AddLine("3D Portraits: Forever Frames")
+    GameTooltip:AddLine("Portraits 3D: Forever Frames")
     GameTooltip:AddLine("Left click: options", 1, 1, 1)
     GameTooltip:AddLine("Right click: 3D portraits on/off", 1, 1, 1)
     GameTooltip:AddLine("Drag: move", 1, 1, 1)
@@ -1525,11 +1525,11 @@ end
 -- The entry under Options > AddOns only holds a button that opens the window.
 local function BuildPanel()
   local panel = CreateFrame("Frame")
-  panel.name = "3D Portraits: Forever Frames"
+  panel.name = "Portraits 3D: Forever Frames"
 
   local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalHuge")
   title:SetPoint("TOP", 0, -80)
-  title:SetText("3D Portraits: Forever Frames")
+  title:SetText("Portraits 3D: Forever Frames")
   local sub = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
   sub:SetPoint("TOP", title, "BOTTOM", 0, -8)
   sub:SetText("3D unit frame portraits")
@@ -1545,7 +1545,7 @@ local function BuildPanel()
   open:SetScript("OnClick", ToggleWindow)
 
   if Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory then
-    local category = Settings.RegisterCanvasLayoutCategory(panel, "3D Portraits: Forever Frames")
+    local category = Settings.RegisterCanvasLayoutCategory(panel, "Portraits 3D: Forever Frames")
     Settings.RegisterAddOnCategory(category)
   elseif InterfaceOptions_AddCategory then
     InterfaceOptions_AddCategory(panel)
