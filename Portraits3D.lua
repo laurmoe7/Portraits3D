@@ -182,8 +182,11 @@ end
 -- model, so they are hidden and the level is shown on our own badge instead.
 local hooked = {}
 local function Hush(obj, on)
+  local was = obj.portraits3dHush
   obj.portraits3dHush = on
-  obj:SetAlpha(on and 0 or 1)
+  -- Only give the alpha back to pieces we hid ourselves; forcing 1 on everything
+  -- (this runs every second) showed pieces the game had faded out.
+  if on then obj:SetAlpha(0) elseif was then obj:SetAlpha(1) end
   -- Blizzard shows the glow again and pulses it with SetAlpha; keep it hidden.
   if on and not hooked[obj] then
     hooked[obj] = true
@@ -282,7 +285,7 @@ local function ApplyBackground(entry)
   end
 end
 
-local Cover2D -- defined further down
+local Cover2D, ScanLevel -- defined further down
 
 local function Decorate(entry, active)
   local square = DB.square and active
@@ -358,9 +361,11 @@ local function Decorate(entry, active)
     if square and DB.showGlow ~= false and (combat or resting) then
       if combat then entry.glowTex:SetVertexColor(1, 0.25, 0.2) else entry.glowTex:SetVertexColor(1, 0.82, 0.2) end
       entry.glowTex:Show()
-      entry.border:SetScript("OnUpdate", function()
-        entry.glowTex:SetAlpha(0.45 + 0.4 * math.sin(GetTime() * 3))
-      end)
+      if not entry.border:GetScript("OnUpdate") then -- Decorate runs every second
+        entry.border:SetScript("OnUpdate", function()
+          entry.glowTex:SetAlpha(0.45 + 0.4 * math.sin(GetTime() * 3))
+        end)
+      end
     else
       entry.glowTex:Hide()
       entry.border:SetScript("OnUpdate", nil)
@@ -380,7 +385,7 @@ end
 -- Finds the level badge pictures and texts Blizzard keeps in a unit frame's
 -- content frame: anything stored under a key with a
 -- name starting with "Level", or using the plain small-circle atlas.
-local function ScanLevel(root, found, seen, depth, skip)
+function ScanLevel(root, found, seen, depth, skip)
   if depth > 4 then return end
   for key, value in pairs(root) do
     if type(key) == "string" and type(value) == "table" and value ~= root and value.SetAlpha
@@ -503,7 +508,7 @@ local function ApplyStyle(entry)
     holder:SetFrameLevel(parent:GetFrameLevel() + 1)
   else
     holder:SetFrameStrata(StrataBelow(parent))
-    end
+  end
   local base = holder:GetFrameLevel()
   -- The bars and texts live in a sibling "content" frame; lift it above our
   -- border so a border that reaches over them cannot hide them.
@@ -773,12 +778,19 @@ local function Refresh(entry, force)
   if not Setup(entry) then return end
   local unit = entry.unit
   if testParty and unit:match("^party") then unit = "player" end
-  if not DB.enabled or DB.frames[GroupOf(entry)] == false or not UnitExists(unit) or not UnitIsConnected(unit) or not UnitIsVisible(unit) then
+  local wanted = DB.enabled and DB.frames[GroupOf(entry)] ~= false
+  -- A disconnected unit has no 3D model; its flat portrait is shown grey instead,
+  -- and given its colour back once the unit is online again (or the option is off).
+  local offline = wanted and DB.greyDead ~= false and UnitExists(unit) and not UnitIsConnected(unit)
+  if offline and not entry.flatGreyed then
+    entry.flatGreyed = true
+    pcall(entry.portrait.SetDesaturated, entry.portrait, true)
+  elseif not offline and entry.flatGreyed then
+    entry.flatGreyed = nil
+    pcall(entry.portrait.SetDesaturated, entry.portrait, false)
+  end
+  if not wanted or not UnitExists(unit) or not UnitIsConnected(unit) or not UnitIsVisible(unit) then
     Show2D(entry)
-    -- A disconnected unit has no 3D model; its flat portrait is shown grey instead.
-    if DB.enabled and DB.greyDead ~= false and UnitExists(unit) and not UnitIsConnected(unit) then
-      pcall(entry.portrait.SetDesaturated, entry.portrait, true)
-    end
     return
   end
   Decorate(entry, true)
@@ -801,7 +813,8 @@ local function Refresh(entry, force)
   ApplyLook(entry, unit)
   -- The model loads a moment later and can reset the camera; apply again.
   C_Timer.After(0.2, function()
-    if entry.holder:IsShown() then
+    -- skip if the frame has moved on to another unit since
+    if entry.holder:IsShown() and entry.state == state then
       ApplyCamera(entry)
       entry.greyed = nil
       ApplyLook(entry, unit)
@@ -831,7 +844,7 @@ local function DecoEntry()
   end
 end
 
--- Elite border mover (not saved until "Use these numbers"): forces the game's elite /
+-- Elite border mover (not saved until "Save"): forces the game's elite /
 -- rare / boss border on the target frame so it can be lined up by hand.
 local TEST = { deco = "off", decoX = 0.00, decoY = 0.02, decoSize = 0.99 }
 local TEST_ATLAS = {
@@ -856,6 +869,12 @@ local function UpdateDeco()
   elseif testForced then
     testForced = false
     deco:Hide()
+    -- let the game put back the real border if the target is elite / rare
+    if TargetFrame and TargetFrame.CheckClassification then
+      pcall(TargetFrame.CheckClassification, TargetFrame)
+    elseif TargetFrame_CheckClassification then
+      pcall(TargetFrame_CheckClassification, TargetFrame)
+    end
   end
   local ov = entry.decoOverlay
   local atlas = deco.GetAtlas and deco:GetAtlas()
@@ -1058,9 +1077,9 @@ local function ToggleBorderTest()
   AddTestSlider("decoSize", "Size", 0.5, 1.5, -182)
 
   local save = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  save:SetSize(200, 24)
+  save:SetSize(100, 24)
   save:SetPoint("TOPLEFT", 24, -236)
-  save:SetText("Use these numbers")
+  save:SetText("Save")
   save:SetScript("OnClick", function()
     if TEST.deco == "off" then
       print("|cff66ccffPortraits3D|r pick Elite, Rare or Boss first")
@@ -1077,7 +1096,7 @@ local function ToggleBorderTest()
   note:SetWidth(282)
   note:SetJustifyH("LEFT")
   note:SetTextColor(0.75, 0.75, 0.75)
-  note:SetText("Moves the elite, rare and boss border on your target frame. Needs the rounded square frame. Pick a border type, move it, then Use these numbers. Elite and Rare share one setting, Boss has its own. None turns the preview off.")
+  note:SetText("Moves the elite, rare and boss border on your target frame. Needs the rounded square frame. Pick a border type, move it, then Save. Elite and Rare share one setting, Boss has its own. None turns the preview off.")
   f:SetScript("OnShow", function() for _, r in ipairs(refreshers) do r() end end)
   for _, r in ipairs(refreshers) do r() end
 end
@@ -1378,6 +1397,7 @@ local function BuildWindow()
     DB.showZzz, DB.greyDead, DB.hideCombatText, DB.hideSwords = DEFAULTS.showZzz, DEFAULTS.greyDead, DEFAULTS.hideCombatText, DEFAULTS.hideSwords
     SetNumber("gradient", DEFAULTS.gradient)
     SetNumber("gradientAlpha", DEFAULTS.gradientAlpha)
+    SetMinimapHidden(DEFAULTS.hideMinimap)
     SetSquare(DEFAULTS.square)
     for _, prefix in ipairs({ "", "target", "party", "pet" }) do
       for _, name in ipairs({ "scale", "zoom", "squareSize", "offX", "offY", "turn", "frameX" }) do
