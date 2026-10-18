@@ -23,6 +23,7 @@ Copy the `Portraits3D` folder to `World of Warcraft\_classic_beta_\Interface\Add
 | `/p3d` | opens the options window |
 | `/p3d on` / `off` | turns the 3D portraits on / off |
 | `/p3d minimap` | shows / hides the minimap button |
+| `/p3d blend` | switches the rounded square between the original and the blended look |
 
 The options are also under Options > AddOns. For troubleshooting, `/p3d dev testparty` shows the party frames while solo, and `/p3d dev dump <unit>` and `/p3d dev debug` list what the addon found in each unit frame.
 

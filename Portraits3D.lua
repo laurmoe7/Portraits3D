@@ -13,7 +13,7 @@ local addonName = ...
 local DEFAULTS = { enabled = true, scale = 0.85, zoom = 1, petScale = 0.85, petZoom = 1,
   targetScale = 0.85, targetZoom = 1, partyScale = 0.85, partyZoom = 1, partySquareSize = 1.04, anim = "full",
   hideMinimap = true, square = false, squareSize = 1.04, targetSquareSize = 1.04, petSquareSize = 1.04, background = "black",
-  showBadge = true, showGlow = true, showZzz = true, greyDead = true, hideCombatText = false, hideSwords = false, gradient = 1, gradientAlpha = 1,
+  squareStyle = "classic", showBadge = true, showGlow = true, showZzz = true, greyDead = true, hideCombatText = false, hideSwords = false, gradient = 1, gradientAlpha = 1,
   turn = 0, targetTurn = 0, partyTurn = 0, petTurn = 0,
   frameX = 0, targetFrameX = 0, partyFrameX = 0, petFrameX = 0, universal = false,
   offX = 0, offY = 0, targetOffX = 0, targetOffY = 0, partyOffX = 0, partyOffY = 0, petOffX = 0, petOffY = 0 }
@@ -29,6 +29,44 @@ local EDGE_PAD_BOTTOM = 0.05 -- ...and below the mana bar
 local RING_KEEP = 0.54 -- Blizzard's frame picture is hidden left of this line (portrait widths from the portrait centre, towards the bars); adjust it here
 local PLAQUE_SHIFT = 0 -- the square frame sits this far (portrait widths) towards the bars
 local HOLE = 0.89
+
+-- "Blended" square (Textures\RoundedFrameBlend.tga, made by tools\make_blend_frame.py):
+-- shaded like Blizzard's ring and drawn at the ring's own place and size, so the
+-- name plate and bars tuck under it the way they tuck under the ring. Instead of
+-- cutting Blizzard's picture at a line, only the round ring is removed from it.
+local FRAME_BLEND_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RoundedFrameBlend"
+-- the hole that removes the ring has a straight side towards the bars, so the plate's
+-- edge line (right against the ring) and the joints of the bar lines are kept
+local RING_HOLE_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RingHoleCut"
+local HOLE_BLEND = 0.85 -- hole width of RoundedFrameBlend
+local HOLE_DISC = 0.84 -- the round hole's width in RingHoleCut, as a fraction of the picture
+local FLAT_CUT = 0.714 -- where its straight side is, as a fraction of the half width
+local PLATE_KEEP = 1.2 -- the straight side stops this far inside the ring's radius (unless a ring sets `cut`)
+-- Space left between the blended square and the bars (the ring touches them), how much
+-- further away from the bars the square is moved, and how much smaller it is drawn
+-- (it shrinks away from the bars' side). Small frames (pet, party, target of target)
+-- get a tighter fit, and are a little smaller and lower so they clear the frame above them.
+local FIT = { gap = 4, shift = 1.5, shrink = 0, down = 0 }
+local FIT_SMALL = { gap = 2, shift = 1.5, shrink = 2, down = 1.5 }
+-- The portrait rings in the game's unit frame picture (Interface\HUD\UIUnitFrameC60,
+-- 1024 x 512): centre and outer radius in that picture's pixels, and (`cut`) how far
+-- from the centre the plate's edge line begins when that is closer than r - PLATE_KEEP.
+-- A frame finds its ring by looking for the one inside the part of the picture it shows.
+local ATLAS_W, ATLAS_H = 1024, 512
+local RINGS = {
+  -- player (measured centre 441.5 / 641.5): in game its picture lands about 1.9 px
+  -- further left than worked out from it, so the centre is set that much further left
+  { x = 439.6, y = 36.5, r = 34, cut = 31.8 }, { x = 639.6, y = 36.5, r = 34, cut = 31.8 }, -- edge line 32.5 out
+  { x = 40.5, y = 40, r = 33.5 },     -- player (vehicle)
+  { x = 365, y = 42.5, r = 33.5 },    -- target (vehicle)
+  { x = 360.5, y = 121, r = 33 },     -- target and focus
+  { x = 135.5, y = 188.5, r = 27.5 }, -- small target
+  -- party, pet, target of target; `bleed`: the next frame's ring in the picture, whose
+  -- top edge peeks into the bottom of this frame's part of the picture
+  { x = 24, y = 242, r = 21.5, small = true, bleed = { x = 23, y = 292, r = 21 } },
+  { x = 24, y = 395, r = 21.5, small = true, bleed = { x = 23, y = 445, r = 21 } },
+}
+local RING_ROUND_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RingHole" -- round hole (HOLE_DISC wide)
 
 -- Frames that can be switched on or off in the options (party 1-4 share one).
 local GROUPS = {
@@ -287,6 +325,15 @@ end
 
 local Cover2D, ScanLevel -- defined further down
 
+-- Warns once if one of our texture files cannot be loaded (missing or misnamed).
+local missingWarned = false
+local function CheckLoaded(ok, file)
+  if ok == false and not missingWarned then
+    missingWarned = true
+    print("|cff66ccffPortraits3D|r could not load " .. file:match("[^/]+$") .. " (is it in the addon's Textures folder?)")
+  end
+end
+
 local function Decorate(entry, active)
   local square = DB.square and active
   for _, path in ipairs(entry.level or {}) do
@@ -428,24 +475,101 @@ local function Opt(entry, key)
   return DB[key]
 end
 
+-- Where Blizzard's ring is, from the part of the unit frame picture the frame shows:
+-- its centre as an offset from the portrait's centre, and its outer radius (all in
+-- the portrait's units). Nil when it cannot be worked out.
+-- Puts a mask on Blizzard's frame picture, or takes it off; `flag` remembers which.
+local function SetRingMask(entry, mask, flag, on)
+  if not mask or not entry.ringTexObj then return end
+  if on and not entry[flag] then
+    pcall(entry.ringTexObj.AddMaskTexture, entry.ringTexObj, mask)
+    entry[flag] = true
+  elseif not on and entry[flag] then
+    pcall(entry.ringTexObj.RemoveMaskTexture, entry.ringTexObj, mask)
+    entry[flag] = false
+  end
+end
+
+local function RingGeometry(entry)
+  local tex = entry.ringTexObj
+  if not (tex and tex.GetAtlas and C_Texture and C_Texture.GetAtlasInfo) then return end
+  local atlas = tex:GetAtlas()
+  local info = atlas and C_Texture.GetAtlasInfo(atlas)
+  if not info or not info.leftTexCoord then return end
+  local l, r = info.leftTexCoord * ATLAS_W, info.rightTexCoord * ATLAS_W
+  local t, b = info.topTexCoord * ATLAS_H, info.bottomTexCoord * ATLAS_H
+  local left, top, w, h = tex:GetLeft(), tex:GetTop(), tex:GetWidth(), tex:GetHeight()
+  local pcx, pcy = entry.portrait:GetCenter()
+  if not (left and top and w and h and w > 0 and pcx and r ~= l and b ~= t) then return end
+  for _, ring in ipairs(RINGS) do
+    if ring.x > math.min(l, r) and ring.x < math.max(l, r) and ring.y > math.min(t, b) and ring.y < math.max(t, b) then
+      local sx, sy = w / (r - l), h / (b - t)
+      local k = tex:GetEffectiveScale() / entry.portrait:GetEffectiveScale()
+      local x, y = left + (ring.x - l) * sx, top - (ring.y - t) * sy
+      local scale = math.abs(sx) * k
+      local bleed
+      if ring.bleed then
+        local bx, by = left + (ring.bleed.x - l) * sx, top - (ring.bleed.y - t) * sy
+        bleed = { dx = bx * k - pcx, dy = by * k - pcy, r = ring.bleed.r * scale }
+      end
+      return x * k - pcx, y * k - pcy, ring.r * scale, (ring.cut or ring.r - PLATE_KEEP) * scale, ring, bleed
+    end
+  end
+end
+
 local function Layout(entry)
   local holder, clip = entry.holder, entry.clip
   if not holder then return end
   local w, h = holder:GetWidth(), holder:GetHeight()
   if not w or w <= 0 then return end
   if DB.square then
+    local blend = DB.squareStyle == "blend"
     -- The model fills the hole of the border picture exactly.
     local size = w * Opt(entry, "squareSize")
+    local cx, cy = 0, 0
+    local dx, dy, radius, cut, ring, bleed
+    if blend then
+      -- Exactly in the ring's place and as big as the ring; the size and position
+      -- sliders are for the original square and are not used here.
+      dx, dy, radius, cut, ring, bleed = RingGeometry(entry)
+      if not radius or radius < w * 0.35 or radius > w * 0.8 then dx, dy, radius, cut, ring, bleed = 0, 0, w * 0.56, w * 0.56 - PLATE_KEEP, nil, nil end
+      local fit = ring and ring.small and FIT_SMALL or FIT
+      -- Its outer side starts on the ring's edge; the side by the bars is pulled back
+      -- by the gap, then the whole square is moved away from the bars by the shift,
+      -- and the shrink takes the rest off the side away from the bars.
+      local away = entry.side == "right" and 1 or -1
+      cx, cy = dx + away * (fit.gap / 2 + fit.shift - fit.shrink / 2), dy - fit.down
+      size = 2 * (radius + 0.5) - fit.gap - fit.shrink
+      if entry.hole then
+        -- Sized so the straight side lands just before the plate's edge line; the
+        -- round part then reaches a little past the ring's soft edge.
+        local d = 2 * cut / FLAT_CUT
+        entry.hole:SetSize(d, d)
+        entry.hole:ClearAllPoints()
+        entry.hole:SetPoint("CENTER", entry.portrait, "CENTER", dx, dy)
+      end
+      if entry.hole2 then
+        -- a second round hole over the next frame's ring, which peeks in at the bottom
+        if bleed then
+          local d = 2 * (bleed.r + 1.5) / HOLE_DISC
+          entry.hole2:SetSize(d, d)
+          entry.hole2:ClearAllPoints()
+          entry.hole2:SetPoint("CENTER", entry.portrait, "CENTER", bleed.dx, bleed.dy)
+        end
+        entry.wantHole2 = bleed and true or false
+        SetRingMask(entry, entry.hole2, "hole2On", entry.wantHole2)
+      end
+    end
     entry.border:SetSize(size, size)
     -- Shifted towards the bars (right for player and pet, left for target and
     -- focus) so it covers the part of the ring the mask leaves.
-    local shift = (entry.side == "right" and -1 or 1) * w * (PLAQUE_SHIFT + (Opt(entry, "frameX") or 0))
+    local shift = blend and 0 or (entry.side == "right" and -1 or 1) * w * (PLAQUE_SHIFT + (Opt(entry, "frameX") or 0))
     entry.border:ClearAllPoints()
-    entry.border:SetPoint("CENTER", entry.portrait, "CENTER", shift, 0)
+    entry.border:SetPoint("CENTER", entry.portrait, "CENTER", cx + shift, cy)
     clip:ClearAllPoints()
     clip:SetPoint("CENTER", entry.border, "CENTER")
     if entry.glowTex then entry.glowTex:SetSize(size / GLOW_RATIO, size / GLOW_RATIO) end
-    if entry.cut then
+    if entry.cut and not blend then
       -- The mask's centre line goes where Blizzard's name plate and bars begin.
       local dir = entry.side == "right" and -1 or 1
       -- The mask picture's top and bottom edges sit on the top of the name plate
@@ -473,7 +597,8 @@ local function Layout(entry)
         entry.cut:SetPoint("TOPRIGHT", entry.portrait, "CENTER", x, top)
       end
     end
-    clip:SetSize(size * HOLE, size * HOLE)
+    local hole = blend and HOLE_BLEND or HOLE
+    clip:SetSize(size * hole, size * hole)
     if entry.badge then
       local b = math.max(22, size * 0.42)
       local inset = size * 0.08
@@ -528,16 +653,13 @@ local function ApplyStyle(entry)
   end
   entry.border:SetShown(DB.square and entry.holder:IsShown())
   -- Square look: cut a hole in Blizzard's ring picture so the round ring is
-  -- hidden instead of covered.
-  if entry.cut and entry.ringTexObj then
-    if DB.square and not entry.cutOn then
-      pcall(entry.ringTexObj.AddMaskTexture, entry.ringTexObj, entry.cut)
-      entry.cutOn = true
-    elseif not DB.square and entry.cutOn then
-      pcall(entry.ringTexObj.RemoveMaskTexture, entry.ringTexObj, entry.cut)
-      entry.cutOn = false
-    end
-  end
+  -- hidden instead of covered (the blended look removes only the ring itself).
+  local blend = DB.squareStyle == "blend"
+  local file = blend and FRAME_BLEND_TEXTURE or FRAME_TEXTURE
+  CheckLoaded(entry.frameTex:SetTexture(file), file)
+  SetRingMask(entry, entry.cut, "cutOn", DB.square and not blend)
+  SetRingMask(entry, entry.hole, "holeOn", DB.square and blend)
+  SetRingMask(entry, entry.hole2, "hole2On", DB.square and blend and entry.wantHole2)
   Decorate(entry, entry.holder:IsShown())
   Layout(entry)
 end
@@ -658,7 +780,15 @@ local function Setup(entry)
       if entry.side == "right" then file = file .. "Mirror" end
       cut:SetTexture(file, "CLAMP", "CLAMP")
       cut:SetPoint("CENTER", portrait, "CENTER")
-      entry.cut, entry.ringTexObj = cut, ringTex
+      -- blended look: removes only the round ring (sized and placed by Layout)
+      local hole = owner:CreateMaskTexture()
+      local holeFile = RING_HOLE_TEXTURE .. (entry.side == "right" and "Mirror" or "")
+      CheckLoaded(hole:SetTexture(holeFile, "CLAMP", "CLAMP"), holeFile)
+      hole:SetPoint("CENTER", portrait, "CENTER")
+      local hole2 = owner:CreateMaskTexture()
+      CheckLoaded(hole2:SetTexture(RING_ROUND_TEXTURE, "CLAMP", "CLAMP"), RING_ROUND_TEXTURE)
+      hole2:SetPoint("CENTER", portrait, "CENTER")
+      entry.cut, entry.hole, entry.hole2, entry.ringTexObj = cut, hole, hole2, ringTex
     end
   end
 
@@ -892,9 +1022,11 @@ local function UpdateDeco()
   local dcx, dcy = deco:GetCenter()
   local pcx, pcy = entry.portrait:GetCenter()
   if dcx and pcx then dx, dy = dcx - pcx, dcy - pcy end
-  local sq = Opt(entry, "squareSize")
+  local blend = DB.squareStyle == "blend"
+  local sq = blend and 1 or Opt(entry, "squareSize")
   local kind = DecoKind(atlas)
   local style = testing and { x = TEST.decoX, y = TEST.decoY, size = TEST.decoSize }
+    or (blend and { x = 0, y = 0, size = 1 })
     or (DB.decoStyle and DB.decoStyle[kind]) or DECO_STYLE[kind]
   if not ov then
     ov = CreateFrame("Frame", nil, entry.holder)
@@ -908,7 +1040,7 @@ local function UpdateDeco()
   local scaled = sq * style.size
   ov.tex:SetSize(dw * scaled, dh * scaled)
   ov.tex:ClearAllPoints()
-  local shift = (entry.side == "right" and -1 or 1) * entry.holder:GetWidth() * (Opt(entry, "frameX") or 0)
+  local shift = blend and 0 or (entry.side == "right" and -1 or 1) * entry.holder:GetWidth() * (Opt(entry, "frameX") or 0)
   ov.tex:SetPoint("CENTER", entry.portrait, "CENTER", dx * sq + style.x * dw + shift, dy * sq + style.y * dh)
   ov:Show()
   Hush(deco, true)
@@ -950,6 +1082,13 @@ local function SetNumber(key, n)
     if key == "gradientAlpha" then ApplyBackground(entry) end
     if entry.model and entry.holder:IsShown() then ApplyCamera(entry) end
   end
+end
+
+-- "classic" (our own square, shifted towards the bars) or "blend" (in the ring's place)
+local function SetSquareStyle(style)
+  DB.squareStyle = style
+  for _, entry in ipairs(ENTRIES) do ApplyStyle(entry) end
+  RefreshAll(true)
 end
 
 local function SetSquare(on)
@@ -1233,6 +1372,7 @@ local function BuildWindow()
 
   local function IsRound() return not DB.square end
   local function IsSquare() return DB.square end
+  local function IsClassicSquare() return DB.square and DB.squareStyle ~= "blend" end
 
   -- Two check boxes per row, for a list of { key, label } choices.
   local function AddChoices(list, top, current, apply)
@@ -1250,6 +1390,9 @@ local function BuildWindow()
     "Hides the edges and clipping that show when a 3D model is used in the normal round frames.")
   AddCheck("Minimap button", 28, -92, function() return not DB.hideMinimap end,
     function(on) SetMinimapHidden(not on) end)
+  AddCheck("Blended look", 178, -92, function() return DB.squareStyle == "blend" end,
+    function(on) SetSquareStyle(on and "blend" or "classic"); f.refresh() end, IsSquare,
+    "Draws the square in place of Blizzard's ring, at the ring's size and shaded like it, so the name plate and bars run into it like they do into the ring. Turn off for the original square.")
 
   AddSection("FRAMES", -126, 98)
   FrameCheck("player", 28, -152)
@@ -1366,8 +1509,15 @@ local function BuildWindow()
 
   AddHeading("FRAME", -152)
   AddSlider(function() return K("scale") end, "Model size", 0.5, 1.2, -172, 0.05, IsRound)
-  AddSlider(function() return K("squareSize") end, "Frame size", 0.8, 1.25, -172, 0.05, IsSquare)
-  AddSlider(function() return K("frameX") end, "Frame position", -0.5, 0.5, -218, 0.01, IsSquare)
+  AddSlider(function() return K("squareSize") end, "Frame size", 0.8, 1.25, -172, 0.05, IsClassicSquare)
+  AddSlider(function() return K("frameX") end, "Frame position", -0.5, 0.5, -218, 0.01, IsClassicSquare)
+  local blendNote = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+  blendNote:SetPoint("TOPLEFT", 30 + colX, -176)
+  blendNote:SetWidth(262)
+  blendNote:SetJustifyH("LEFT")
+  blendNote:SetTextColor(0.75, 0.75, 0.75)
+  blendNote:SetText("The blended look sits exactly where Blizzard's ring is, at its size, so it has no size or position settings.")
+  controls[#controls + 1] = function() blendNote:SetShown(DB.square and DB.squareStyle == "blend") end
   AddHeading("CAMERA", -268)
   AddSlider(function() return K("zoom") end, "Zoom", 0, 2, -288, 0.05)
   AddSlider(function() return K("turn") end, "Turn", -90, 90, -334, 5)
@@ -1398,6 +1548,7 @@ local function BuildWindow()
     SetNumber("gradient", DEFAULTS.gradient)
     SetNumber("gradientAlpha", DEFAULTS.gradientAlpha)
     SetMinimapHidden(DEFAULTS.hideMinimap)
+    DB.squareStyle = DEFAULTS.squareStyle
     SetSquare(DEFAULTS.square)
     for _, prefix in ipairs({ "", "target", "party", "pet" }) do
       for _, name in ipairs({ "scale", "zoom", "squareSize", "offX", "offY", "turn", "frameX" }) do
@@ -1604,6 +1755,11 @@ local function Debug()
   for _, entry in ipairs(ENTRIES) do
     local portrait, path = FindPortrait(entry)
     if entry.cut then Say("   ring cut ready for " .. (entry.ringTex and entry.ringTex[1] or "?")) end
+    if entry.portrait then
+      local dx, dy, radius = RingGeometry(entry)
+      Say(radius and string.format("   ring found: offset %.1f, %.1f  radius %.1f  (portrait %.1f wide)", dx, dy, radius, entry.portrait:GetWidth() or 0)
+        or "   ring not found in the frame picture (blended look uses a guess)")
+    end
     Say(string.format("%-12s %s", entry.unit, portrait and ("portrait at " .. path .. (entry.holder and ", 3D set up" or "")) or "no portrait found"))
     for _, obj in ipairs(entry.levelFound or {}) do
       Say("   hides level piece " .. tostring(obj:GetName() or obj:GetObjectType()))
@@ -1623,6 +1779,12 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
   if cmd == "on" or cmd == "off" then
     SetEnabled(cmd == "on")
     Say(DB.enabled and "on" or "off")
+  elseif cmd == "blend" then
+    -- quick switch between the two square looks, for comparing them
+    SetSquareStyle(DB.squareStyle == "blend" and "classic" or "blend")
+    if not DB.square then SetSquare(true) end
+    if win and win.refresh then win.refresh() end
+    Say("square look: " .. (DB.squareStyle == "blend" and "blended" or "original"))
   elseif cmd == "minimap" then
     SetMinimapHidden(not DB.hideMinimap)
     Say("minimap button " .. (DB.hideMinimap and "hidden" or "shown"))
@@ -1663,6 +1825,82 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
       Say(entry and entry.decoInfo or "no border drawn right now (target an elite, square frame on)")
     elseif sub == "bordertest" then
       ToggleBorderTest()
+    elseif sub == "shown" then
+      -- /p3d dev shown [unit]: every Blizzard picture that is drawn on or around the
+      -- portrait right now (not ours), to find a glow that is not hidden
+      local unit = rest ~= "" and rest or "player"
+      local entry
+      for _, e in ipairs(ENTRIES) do if e.unit == unit then entry = e end end
+      local root = entry and Resolve((entry.root or (unit == "player" and "PlayerFrame") or (unit == "target" and "TargetFrame")
+        or (unit == "focus" and "FocusFrame") or (unit == "pet" and "PetFrame")) or "")
+      if not (entry and entry.portrait and type(root) == "table") then Say("no frame for " .. unit) return end
+      local pcx, pcy = entry.portrait:GetCenter()
+      local reach = entry.portrait:GetWidth() * 0.75
+      local count, skipped, seen = 0, 0, {}
+      local function name(region, path)
+        return (region.GetName and region:GetName()) or path
+      end
+      local function walk(frame, path, depth)
+        if depth > 6 or seen[frame] or frame == entry.holder then return end
+        seen[frame] = true
+        local keys = {}
+        for k, v in pairs(frame) do if type(k) == "string" and type(v) == "table" then keys[v] = k end end
+        -- Some numbers (the bars' size and place) are secret to addons in newer game
+        -- versions and cannot be compared; such pictures are counted and skipped.
+        local function check(i, region)
+          local alpha = region.GetEffectiveAlpha and region:GetEffectiveAlpha() or (region.GetAlpha and region:GetAlpha()) or 0
+          if region.GetObjectType and region:GetObjectType() == "Texture" and region:IsVisible() and alpha > 0.01 then
+            local x, y = region:GetCenter()
+            local w, h = region:GetWidth() or 0, region:GetHeight() or 0
+            local k = (region:GetEffectiveScale() or 1) / (entry.portrait:GetEffectiveScale() or 1)
+            if x and pcx and math.abs(x * k - pcx) < reach + w * k / 2 and math.abs(y * k - pcy) < reach + h * k / 2 then
+              count = count + 1
+              local atlas = region.GetAtlas and region:GetAtlas()
+              local file = region.GetTexture and region:GetTexture()
+              local masks = region.GetNumMaskTextures and region:GetNumMaskTextures() or 0
+              Say(string.format("%s  %s  alpha=%.2f %.0fx%.0f at %.1f,%.1f blend=%s masks=%d layer=%s",
+                name(region, path .. "." .. (keys[region] or ("#" .. i))),
+                atlas and ("atlas=" .. atlas) or ("file=" .. tostring(file)), alpha, w, h, x * k - pcx, y * k - pcy,
+                tostring(region.GetBlendMode and region:GetBlendMode()), masks,
+                tostring(region.GetDrawLayer and region:GetDrawLayer())))
+            end
+          end
+        end
+        for i, region in ipairs({ frame:GetRegions() }) do
+          if not pcall(check, i, region) then skipped = skipped + 1 end
+        end
+        for _, child in ipairs({ frame:GetChildren() }) do
+          walk(child, path .. "." .. (keys[child] or "?"), depth + 1)
+        end
+      end
+      walk(root, root.GetName and root:GetName() or unit, 0)
+      Say(count .. " pictures shown around the portrait (" .. skipped .. " could not be read)")
+    elseif sub == "ring" then
+      -- /p3d dev ring [unit]: what the blended look measured for that frame's ring
+      local unit = rest ~= "" and rest or "player"
+      for _, entry in ipairs(ENTRIES) do
+        if entry.unit == unit then
+          local tex, p = entry.ringTexObj, entry.portrait
+          if not (tex and p) then Say(unit .. ": no ring picture / portrait found") break end
+          local atlas = tex.GetAtlas and tex:GetAtlas()
+          local info = atlas and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)
+          Say(string.format("%s atlas=%s file=%s", unit, tostring(atlas), tostring(info and (info.filename or info.file))))
+          if info then
+            Say(string.format("  texcoords L%.4f R%.4f T%.4f B%.4f  atlas size %sx%s",
+              info.leftTexCoord or -1, info.rightTexCoord or -1, info.topTexCoord or -1, info.bottomTexCoord or -1,
+              tostring(info.width), tostring(info.height)))
+          end
+          local pcx, pcy = p:GetCenter()
+          Say(string.format("  frame picture L%.1f T%.1f %.1fx%.1f scale %.3f",
+            tex:GetLeft() or -1, tex:GetTop() or -1, tex:GetWidth() or -1, tex:GetHeight() or -1, tex:GetEffectiveScale() or -1))
+          Say(string.format("  portrait centre %.1f,%.1f %.1fx%.1f scale %.3f",
+            pcx or -1, pcy or -1, p:GetWidth() or -1, p:GetHeight() or -1, p:GetEffectiveScale() or -1))
+          local dx, dy, radius = RingGeometry(entry)
+          Say(radius and string.format("  ring offset %.1f,%.1f radius %.1f", dx, dy, radius) or "  ring not matched (using a guess)")
+          Say(string.format("  square %.1f  squareSize=%.2f frameX=%.2f", entry.border:GetWidth() or -1,
+            Opt(entry, "squareSize") or -1, Opt(entry, "frameX") or 0))
+        end
+      end
     elseif sub == "tot" then
       for _, entry in ipairs(ENTRIES) do
         if entry.unit == "targettarget" and entry.portrait then
@@ -1673,12 +1911,12 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
         end
       end
     else
-      Say("/p3d dev testparty | dump <unit> | debug | tot | deco")
+      Say("/p3d dev testparty | dump <unit> | debug | ring [unit] | shown [unit] | tot | deco")
     end
   elseif cmd == "" or cmd == "options" or cmd == "config" then
     ToggleWindow()
   else
-    Say("/p3d opens the options. Also: /p3d on | off | minimap")
+    Say("/p3d opens the options. Also: /p3d on | off | minimap | blend")
   end
 end
 
