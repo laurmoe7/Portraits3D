@@ -121,6 +121,9 @@ local ENTRIES = {
     ringTex = { "TargetFrame.TargetFrameContainer.FrameTexture" },
     nameObj = { "TargetFrame.TargetFrameContent.TargetFrameContentMain.Name" },
     manaObj = { "TargetFrame.TargetFrameContent.TargetFrameContentMain.ManaBar" },
+    -- the health bar, greyed for an offline player (Blizzard only does that on party frames)
+    hpBar = { "TargetFrame.healthbar", "TargetFrame.TargetFrameContent.TargetFrameContentMain.HealthBarsContainer.HealthBar",
+              "TargetFrame.TargetFrameContent.TargetFrameContentMain.HealthBar" },
     level = { "TargetFrame.TargetFrameContent.TargetFrameContentMain.LevelText",
               "TargetFrame.TargetFrameContent.TargetFrameContentMain.LevelBackgroundCircle", "TargetFrameTextureFrameLevelText" }, side = "right",
     ring = { "TargetFrame.TargetFrameContainer" }, content = { "TargetFrame.TargetFrameContent" },
@@ -130,6 +133,8 @@ local ENTRIES = {
     ringTex = { "FocusFrame.TargetFrameContainer.FrameTexture" },
     nameObj = { "FocusFrame.TargetFrameContent.TargetFrameContentMain.Name" },
     manaObj = { "FocusFrame.TargetFrameContent.TargetFrameContentMain.ManaBar" },
+    hpBar = { "FocusFrame.healthbar", "FocusFrame.TargetFrameContent.TargetFrameContentMain.HealthBarsContainer.HealthBar",
+              "FocusFrame.TargetFrameContent.TargetFrameContentMain.HealthBar" },
     level = { "FocusFrame.TargetFrameContent.TargetFrameContentMain.LevelText",
               "FocusFrame.TargetFrameContent.TargetFrameContentMain.LevelBackgroundCircle", "FocusFrameTextureFrameLevelText" }, side = "right",
     ring = { "FocusFrame.TargetFrameContainer" }, content = { "FocusFrame.TargetFrameContent" },
@@ -144,27 +149,36 @@ local ENTRIES = {
   { unit = "targettarget", paths = { "TargetFrameToT.Portrait", "TargetFrame.totFrame.Portrait", "TargetFrameToTPortrait" },
     root = "TargetFrame.totFrame", ring = { "TargetFrame.totFrame" },
     nameObj = { "TargetFrame.totFrame.name", "TargetFrame.totFrame.Name" },
-    manaObj = { "TargetFrame.totFrame.manabar", "TargetFrame.totFrame.ManaBar" } },
+    manaObj = { "TargetFrame.totFrame.manabar", "TargetFrame.totFrame.ManaBar" },
+    hpBar = { "TargetFrame.totFrame.healthbar", "TargetFrame.totFrame.HealthBar" } },
   { unit = "party1", paths = { "PartyFrame.MemberFrame1.Portrait", "PartyMemberFrame1.portrait", "PartyMemberFrame1Portrait" },
     root = "PartyFrame.MemberFrame1", ring = { "PartyFrame.MemberFrame1" },
+    -- leader, PvP and disconnect icons: lifted above the custom frame like the bars
+    content = { "PartyFrame.MemberFrame1.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame1.Texture" },
     -- combat / status glows (round shaped)
     rest = { "PartyFrame.MemberFrame1.threatIndicator", "PartyFrame.MemberFrame1.PartyMemberOverlay.Status" },
     nameObj = { "PartyFrame.MemberFrame1.Name" }, manaObj = { "PartyFrame.MemberFrame1.ManaBar" } },
   { unit = "party2", paths = { "PartyFrame.MemberFrame2.Portrait", "PartyMemberFrame2.portrait", "PartyMemberFrame2Portrait" },
     root = "PartyFrame.MemberFrame2", ring = { "PartyFrame.MemberFrame2" },
+    -- leader, PvP and disconnect icons: lifted above the custom frame like the bars
+    content = { "PartyFrame.MemberFrame2.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame2.Texture" },
     -- combat / status glows (round shaped)
     rest = { "PartyFrame.MemberFrame2.threatIndicator", "PartyFrame.MemberFrame2.PartyMemberOverlay.Status" },
     nameObj = { "PartyFrame.MemberFrame2.Name" }, manaObj = { "PartyFrame.MemberFrame2.ManaBar" } },
   { unit = "party3", paths = { "PartyFrame.MemberFrame3.Portrait", "PartyMemberFrame3.portrait", "PartyMemberFrame3Portrait" },
     root = "PartyFrame.MemberFrame3", ring = { "PartyFrame.MemberFrame3" },
+    -- leader, PvP and disconnect icons: lifted above the custom frame like the bars
+    content = { "PartyFrame.MemberFrame3.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame3.Texture" },
     -- combat / status glows (round shaped)
     rest = { "PartyFrame.MemberFrame3.threatIndicator", "PartyFrame.MemberFrame3.PartyMemberOverlay.Status" },
     nameObj = { "PartyFrame.MemberFrame3.Name" }, manaObj = { "PartyFrame.MemberFrame3.ManaBar" } },
   { unit = "party4", paths = { "PartyFrame.MemberFrame4.Portrait", "PartyMemberFrame4.portrait", "PartyMemberFrame4Portrait" },
     root = "PartyFrame.MemberFrame4", ring = { "PartyFrame.MemberFrame4" },
+    -- leader, PvP and disconnect icons: lifted above the custom frame like the bars
+    content = { "PartyFrame.MemberFrame4.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame4.Texture" },
     -- combat / status glows (round shaped)
     rest = { "PartyFrame.MemberFrame4.threatIndicator", "PartyFrame.MemberFrame4.PartyMemberOverlay.Status" },
@@ -284,13 +298,15 @@ end
 -- The portrait background: black, a gradient that starts black at the bottom and
 -- fades to transparent at the top, the same in the unit's class color, or none.
 -- The background fills its frame; a gradient only reaches up the "Gradient height"
--- fraction of it from the bottom.
+-- fraction of it from the bottom. A frame with no model to show (`entry.empty`) gets
+-- a full grey gradient instead.
 local function AnchorBackground(entry)
   local bg = entry.bg
   if not bg or not entry.holder then return end
   local target = DB.square and entry.clip or entry.holder
   local mode = DB.background or "black"
   local extent = (mode == "gradient" or mode == "class") and (DB.gradient or 1) or 1
+  if entry.empty then extent = 1 end
   bg:ClearAllPoints()
   if extent >= 0.999 then
     bg:SetAllPoints(target)
@@ -301,6 +317,14 @@ local function AnchorBackground(entry)
   bg:SetHeight(math.max(1, (target:GetHeight() or 0) * extent))
 end
 
+-- Dead, ghost and offline units are shown black and white and dimmed, like the
+-- game's own portraits.
+local function IsGrey(unit)
+  if DB.greyDead == false then return false end
+  local ok, dead = pcall(UnitIsDeadOrGhost, unit)
+  return (ok and dead == true) or not UnitIsConnected(unit)
+end
+
 local function ApplyBackground(entry)
   local bg = entry.bg
   if not bg then return end
@@ -308,8 +332,9 @@ local function ApplyBackground(entry)
   local r, g, b = 0, 0, 0
   local fade = mode == "gradient" or mode == "class"
   if mode == "class" then
-    r, g, b = 0, 0, 0 -- units without a class get the plain black gradient
-    if UnitIsPlayer and UnitIsPlayer(entry.unit) then
+    -- units without a class (and grey ones: dead or offline) get the plain black gradient
+    r, g, b = 0, 0, 0
+    if UnitIsPlayer and UnitIsPlayer(entry.unit) and not IsGrey(entry.unit) then
       local _, class = UnitClass(entry.unit)
       local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
       if c then r, g, b = c.r, c.g, c.b end
@@ -317,10 +342,22 @@ local function ApplyBackground(entry)
   end
   -- This runs every second; only redraw when the look has changed (a change of
   -- size goes through Layout, which anchors the background again itself).
-  local key = table.concat({ mode, r, g, b, DB.gradient or 1, DB.gradientAlpha or 1, tostring(DB.square) }, ":")
+  local key = table.concat({ mode, r, g, b, DB.gradient or 1, DB.gradientAlpha or 1, tostring(DB.square),
+    tostring(entry.empty) }, ":")
   if entry.bgKey == key then return end
   entry.bgKey = key
   AnchorBackground(entry)
+  if entry.empty then
+    -- no model: grey at the bottom, fading to transparent at the top
+    bg:Show()
+    bg:SetColorTexture(1, 1, 1, 1)
+    local ok = CreateColor and pcall(bg.SetGradient, bg, "VERTICAL",
+      CreateColor(0.4, 0.4, 0.4, 1), CreateColor(0.4, 0.4, 0.4, 0))
+    if not ok and not pcall(bg.SetGradientAlpha, bg, "VERTICAL", 0.4, 0.4, 0.4, 1, 0.4, 0.4, 0.4, 0) then
+      bg:SetColorTexture(0.4, 0.4, 0.4, 0.5)
+    end
+    return
+  end
   if mode == "clear" then
     bg:Hide()
     return
@@ -339,7 +376,7 @@ local function ApplyBackground(entry)
   end
 end
 
-local Cover2D, ScanLevel -- defined further down
+local Cover2D, ScanLevel, ApplyLook -- defined further down
 
 -- Warns once if one of our texture files cannot be loaded (missing or misnamed).
 local missingWarned = false
@@ -513,6 +550,14 @@ local function SetRingMask(entry, mask, flag, on)
   end
 end
 
+-- Blizzard's round ring is cut out of its frame picture only while our custom frame
+-- is drawn in its place; whenever the frame is Blizzard's own again, the ring is back.
+local function ApplyRingCut(entry)
+  local on = DB.square and entry.holder and entry.holder:IsShown() and true or false
+  SetRingMask(entry, entry.hole, "holeOn", on)
+  SetRingMask(entry, entry.hole2, "hole2On", on and entry.wantHole2)
+end
+
 -- Where Blizzard's ring is, from the part of the unit frame picture the frame shows:
 -- its centre as an offset from the portrait's centre, its outer radius, how far out
 -- the hole's straight side goes, the RINGS entry and the next frame's ring peeking
@@ -583,7 +628,7 @@ local function Layout(entry)
         entry.hole2:SetPoint("CENTER", entry.portrait, "CENTER", bleed.dx, bleed.dy)
       end
       entry.wantHole2 = bleed and true or false
-      SetRingMask(entry, entry.hole2, "hole2On", entry.wantHole2)
+      ApplyRingCut(entry)
     end
     entry.border:SetSize(size, size)
     entry.border:ClearAllPoints()
@@ -597,6 +642,9 @@ local function Layout(entry)
       entry.shadow:SetPoint("CENTER", entry.border, "CENTER", 0, -SHADOW_DROP * radius / (ring and ring.r or radius))
     end
     clip:SetSize(size * HOLE, size * HOLE)
+    -- (the bolt picture has wide empty margins; this makes the bolt itself about as
+    -- big in the frame as Blizzard's is on the party frames)
+    if entry.dcIcon then entry.dcIcon:SetSize(size * HOLE * 1.6, size * HOLE * 1.6) end
     if entry.badge then
       local b = math.max(22, size * 0.42)
       local inset = size * 0.08
@@ -658,8 +706,7 @@ local function ApplyStyle(entry)
   end
   entry.border:SetShown(DB.square and entry.holder:IsShown())
   -- Custom frame: remove the round ring from Blizzard's frame picture.
-  SetRingMask(entry, entry.hole, "holeOn", DB.square)
-  SetRingMask(entry, entry.hole2, "hole2On", DB.square and entry.wantHole2)
+  ApplyRingCut(entry)
   Decorate(entry, entry.holder:IsShown())
   Layout(entry)
 end
@@ -712,7 +759,16 @@ local function Setup(entry)
 
   local model = CreateFrame("PlayerModel", nil, clip)
   model:SetAllPoints(clip)
-  model:SetScript("OnModelLoaded", function() ApplyCamera(entry) end)
+  model:SetScript("OnModelLoaded", function()
+    ApplyCamera(entry)
+    if entry.lookUnit then ApplyLook(entry, entry.lookUnit) end -- loading resets the colour
+  end)
+  -- the disconnect bolt, on frames that have no bolt of Blizzard's (target, focus...)
+  local dcIcon = clip:CreateTexture(nil, "OVERLAY")
+  dcIcon:SetPoint("CENTER", clip, "CENTER")
+  dcIcon:SetSize(1, 1) -- sized by Layout
+  dcIcon:Hide()
+  if dcIcon:SetTexture("Interface/CharacterFrame/Disconnect-Icon") ~= false then entry.dcIcon = dcIcon end
 
   -- The border picture sits in its own frame above the model.
   local border = CreateFrame("Frame", nil, holder)
@@ -888,26 +944,43 @@ function Cover2D(entry, piece, on)
   end
 end
 
+-- Greys the health bar of an offline player, like Blizzard's party frames do, and
+-- gives it its own colour back afterwards.
+local function GreyBar(entry, on)
+  local bar = FindObject(entry.hpBar)
+  if not (bar and bar.SetStatusBarColor and bar.GetStatusBarColor) then return end
+  if on then
+    if not entry.barGreyed then
+      entry.barGreyed = true
+      entry.barColor = { bar:GetStatusBarColor() }
+    end
+    -- every time: the game can colour the bar again when it updates
+    pcall(bar.SetStatusBarDesaturated, bar, true)
+    bar:SetStatusBarColor(0.6, 0.6, 0.6)
+  elseif entry.barGreyed then
+    entry.barGreyed = false
+    pcall(bar.SetStatusBarDesaturated, bar, false)
+    local c = entry.barColor or {}
+    bar:SetStatusBarColor(c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1)
+  end
+end
+
 local function Show2D(entry)
   entry.state = nil
   entry.holder:Hide()
   entry.border:Hide()
+  GreyBar(entry, false)
+  ApplyRingCut(entry) -- Blizzard's frame again: give it its ring back
   Decorate(entry, false)
   for _, piece in ipairs(FlatPieces(entry)) do Hush(piece, false); Cover2D(entry, piece, false) end
 end
 
 local testParty = false -- /p3d testparty: party frames show the player's model
 
--- Dead, ghost and offline units are shown grey and dimmed, like the game's own
--- portraits.
-local function ApplyLook(entry, unit)
-  local grey = false
-  if DB.greyDead ~= false then
-    local ok, dead = pcall(UnitIsDeadOrGhost, unit)
-    grey = ok and dead == true
-  end
-  if entry.greyed == grey then return end
-  entry.greyed = grey
+-- Black and white for dead, ghost and offline units. Set every time (it is cheap):
+-- the game resets it whenever the model is loaded again.
+function ApplyLook(entry, unit)
+  local grey = IsGrey(unit)
   pcall(entry.model.SetDesaturation, entry.model, grey and 1 or 0)
   pcall(entry.model.SetAlpha, entry.model, grey and 0.75 or 1)
 end
@@ -927,34 +1000,70 @@ local function Refresh(entry, force)
     entry.flatGreyed = nil
     pcall(entry.portrait.SetDesaturated, entry.portrait, false)
   end
-  if not wanted or not UnitExists(unit) or not UnitIsConnected(unit) or not UnitIsVisible(unit) then
+  local exists = UnitExists(unit)
+  -- A model can only be loaded while the unit is in sight; once loaded it stays
+  -- when the unit walks out of range or logs off (shown black and white then, with
+  -- the disconnect bolt on it). The game cannot build one for a unit out of sight
+  -- (after a /reload, say): the frame then shows a grey gradient (and the bolt).
+  local visible = exists and UnitIsVisible(unit)
+  local guid = exists and UnitGUID(unit) or nil
+  local cached = guid ~= nil and entry.modelGUID == guid
+  local online = exists and UnitIsConnected(unit) and true or false
+  local use3D = visible or cached
+  -- With no model to show, the custom frame stays (grey); in the round look
+  -- Blizzard's own portrait is shown.
+  if not wanted or not exists or not (use3D or DB.square) then
     Show2D(entry)
     return
   end
+  entry.empty = not use3D -- (before Decorate, which draws the background)
+  GreyBar(entry, not online)
   Decorate(entry, true)
-  ApplyLook(entry, unit)
   for _, piece in ipairs(FlatPieces(entry)) do
     if (piece:GetAlpha() or 0) > 0 then Hush(piece, true) end
   end
-  local state = (UnitGUID(unit) or "?") .. ":" .. tostring(UnitIsDead(unit) and true or false)
+  if not use3D then
+    local state = "empty:" .. (guid or "?") .. ":" .. tostring(online)
+    if entry.state == state and not force then return end
+    entry.state = state
+    entry.model:Hide()
+    -- the party frames draw Blizzard's own bolt on top; the others get ours
+    if entry.dcIcon then entry.dcIcon:SetShown(not online and not entry.unit:match("^party")) end
+    entry.holder:Show()
+    entry.border:SetShown(DB.square)
+    ApplyRingCut(entry)
+    Layout(entry)
+    for _, piece in ipairs(FlatPieces(entry)) do Hush(piece, true); Cover2D(entry, piece, true) end
+    return
+  end
+  if entry.dcIcon then entry.dcIcon:SetShown(not online and not entry.unit:match("^party")) end
+  entry.lookUnit = unit
+  ApplyLook(entry, unit)
+  local state = guid .. ":" .. tostring(UnitIsDead(unit) and true or false)
   if entry.state == state and not force then return end
   entry.state = state
+  entry.model:Show()
   entry.holder:Show()
   entry.border:SetShown(DB.square)
+  ApplyRingCut(entry)
   Layout(entry)
+  if not visible then
+    -- out of sight: keep the model already loaded for this unit (it cannot be reloaded)
+    for _, piece in ipairs(FlatPieces(entry)) do Hush(piece, true); Cover2D(entry, piece, true) end
+    return
+  end
   local model = entry.model
   model:ClearModel()
   ApplyCamera(entry) -- before SetUnit, the way other portrait addons do it
   model:SetUnit(unit)
+  entry.modelGUID = guid
   ApplyCamera(entry)
-  entry.greyed = nil -- a new model starts in colour
   ApplyLook(entry, unit)
   -- The model loads a moment later and can reset the camera; apply again.
   C_Timer.After(0.2, function()
     -- skip if the frame has moved on to another unit since
     if entry.holder:IsShown() and entry.state == state then
       ApplyCamera(entry)
-      entry.greyed = nil
       ApplyLook(entry, unit)
     end
   end)
@@ -1491,7 +1600,7 @@ local function BuildWindow()
     "A soft pulse around the player and pet frames: gold while resting, red in combat (Custom frames only).", IsSquare)
   AddCheck("Grey when dead", 168, -296, function() return DB.greyDead ~= false end,
     function(on) DB.greyDead = on; RefreshAll(true) end,
-    "Dead and ghost units are shown grey and dimmed; offline party members' portraits turn grey.")
+    "Dead, ghost and offline units are shown black and white and dimmed.")
   AddCheck("Hide combat text", 28, -318, function() return DB.hideCombatText == true end,
     function(on) DB.hideCombatText = on; RefreshAll(true) end,
     "Hides the damage and healing numbers that pop up over the player and pet portraits.")
