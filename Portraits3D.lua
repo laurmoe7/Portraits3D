@@ -433,8 +433,17 @@ local function Decorate(entry, active)
     if square then
       local n = UnitLevel(entry.unit)
       entry.badgeText:SetText((n and n > 0) and n or "??")
-      -- white on the player frame (Blizzard shows it white there), yellow elsewhere
-      if entry.unit == "player" then entry.badgeText:SetTextColor(1, 1, 1) else entry.badgeText:SetTextColor(1, 0.82, 0) end
+      -- like Blizzard: white on the player frame, the difficulty colour on units you
+      -- can attack (red for "??"), yellow elsewhere
+      local r, g, b = 1, 0.82, 0
+      if entry.unit == "player" then
+        r, g, b = 1, 1, 1
+      elseif UnitCanAttack and UnitCanAttack("player", entry.unit) then
+        local difficulty = GetCreatureDifficultyColor or GetQuestDifficultyColor
+        local c = (n and n > 0) and difficulty and difficulty(n)
+        if c then r, g, b = c.r, c.g, c.b elseif not (n and n > 0) then r, g, b = 1, 0.1, 0.1 end
+      end
+      entry.badgeText:SetTextColor(r, g, b)
     end
   end
 end
@@ -600,6 +609,19 @@ local function Layout(entry)
   AnchorBackground(entry)
 end
 
+-- The bars and texts live in a sibling "content" frame; lift it above our
+-- border so a border that reaches over them cannot hide them. Not allowed in
+-- combat, so it is tried again after (a /reload in combat would miss it).
+local function LiftContent(entry)
+  if not (DB.square and entry.holder) then return end
+  local content = FindObject(entry.content)
+  local level = entry.holder:GetFrameLevel() + 6
+  if content and content.SetFrameLevel and content:GetFrameLevel() < level
+      and not (InCombatLockdown and InCombatLockdown()) then
+    pcall(content.SetFrameLevel, content, level)
+  end
+end
+
 -- Switches one frame between the round look and the custom frame.
 local function ApplyStyle(entry)
   if not entry.holder then return end
@@ -617,21 +639,15 @@ local function ApplyStyle(entry)
     holder:SetFrameStrata(StrataBelow(parent))
   end
   local base = holder:GetFrameLevel()
-  -- The bars and texts live in a sibling "content" frame; lift it above our
-  -- border so a border that reaches over them cannot hide them.
-  local content = FindObject(entry.content)
-  if DB.square and content and content.SetFrameLevel and content:GetFrameLevel() < base + 6
-      and not (InCombatLockdown and InCombatLockdown()) then
-    pcall(content.SetFrameLevel, content, base + 6)
-  end
+  LiftContent(entry)
   entry.clip:SetFrameLevel(base + 1)
   entry.border:SetFrameLevel(base + 3)
   if entry.badge then entry.badge:SetFrameLevel(base + 5) end -- above the dragon, below the content frame (PvP icon)
   AnchorBackground(entry)
-  if DB.square then
-    entry.bg:RemoveMaskTexture(entry.mask)
-  else
-    entry.bg:AddMaskTexture(entry.mask)
+  -- the round mask on the background, only in the round look (added once at a time)
+  if DB.square == entry.bgMasked then
+    if DB.square then entry.bg:RemoveMaskTexture(entry.mask) else entry.bg:AddMaskTexture(entry.mask) end
+    entry.bgMasked = not DB.square
   end
   entry.border:SetShown(DB.square and entry.holder:IsShown())
   -- Custom frame: remove the round ring from Blizzard's frame picture.
@@ -704,7 +720,7 @@ local function Setup(entry)
   if entry.unit == "player" or entry.unit == "pet" then
     -- Our own resting / combat pulse, shaped to the square frame.
     local glowTex = border:CreateTexture(nil, "BACKGROUND")
-    glowTex:SetTexture(GLOW_TEXTURE)
+    CheckLoaded(glowTex:SetTexture(GLOW_TEXTURE), GLOW_TEXTURE)
     glowTex:SetPoint("CENTER", border, "CENTER")
     glowTex:Hide()
     entry.glowTex = glowTex
@@ -732,11 +748,13 @@ local function Setup(entry)
     local ring = badge:CreateTexture(nil, "ARTWORK", nil, 1)
     ring:SetPoint("TOPLEFT", 0.5, -0.5)
     ring:SetPoint("BOTTOMRIGHT", -0.5, 0.5)
-    ring:SetTexture("Interface/AddOns/Portraits3D/Textures/BadgeRing")
+    local RING_FILE = "Interface/AddOns/Portraits3D/Textures/BadgeRing"
+    CheckLoaded(ring:SetTexture(RING_FILE), RING_FILE)
     local disc = badge:CreateTexture(nil, "ARTWORK", nil, 2)
     disc:SetPoint("TOPLEFT", 2, -2)
     disc:SetPoint("BOTTOMRIGHT", -2, 2)
-    disc:SetTexture("Interface/AddOns/Portraits3D/Textures/BadgeDisc")
+    local DISC_FILE = "Interface/AddOns/Portraits3D/Textures/BadgeDisc"
+    CheckLoaded(disc:SetTexture(DISC_FILE), DISC_FILE)
     local text = badge:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     text:SetPoint("CENTER", badge, "CENTER", 0, 0)
     badge:Hide()
@@ -768,6 +786,7 @@ local function Setup(entry)
 
   entry.portrait, entry.path, entry.holder, entry.clip, entry.model = portrait, path, holder, clip, model
   entry.bg, entry.mask, entry.border, entry.frameTex = bg, mask, border, frameTex
+  entry.bgMasked = true
   holder:SetScript("OnSizeChanged", function() Layout(entry) end)
   holder:Hide()
   ApplyStyle(entry)
@@ -1060,9 +1079,12 @@ local function SetAnimationMode(mode)
   RefreshAll(true) -- reloads each model so it starts from a clean state
 end
 
+local MinimapLook = function() end -- replaced once the minimap button exists
+
 local function SetEnabled(on)
   DB.enabled = on
   RefreshAll(true)
+  MinimapLook()
 end
 
 local GROUP_LABEL = {}
@@ -1597,6 +1619,7 @@ local function BuildMinimapButton()
   button:SetHighlightTexture("Interface/Minimap/UI-Minimap-ZoomButton-Highlight")
 
   local function Look() icon:SetDesaturated(not DB.enabled) end
+  MinimapLook = Look
   local atan2 = math.atan2 or math.atan
   button:SetScript("OnDragStart", function(self)
     GameTooltip:Hide()
@@ -1612,7 +1635,6 @@ local function BuildMinimapButton()
   button:SetScript("OnClick", function(_, mouseButton)
     if mouseButton == "RightButton" then
       SetEnabled(not DB.enabled)
-      Look()
       if win and win.refresh then win.refresh() end
     else
       ToggleWindow()
@@ -1703,7 +1725,7 @@ local function Dump(unit)
           for i, region in ipairs({ obj:GetRegions() }) do
             local atlas = region.GetAtlas and region:GetAtlas()
             local file = region.GetTexture and region:GetTexture()
-            if atlas or file then
+            if (atlas or file) and lines < 100 then
               lines = lines + 1
               Say(string.format("%s region %d  %s  %s  alpha=%.1f shown=%s", path:match("[^%.]+$"), i,
                 atlas and ("atlas=" .. tostring(atlas)) or "", file and ("file=" .. tostring(file)) or "",
@@ -1720,12 +1742,12 @@ end
 local function Debug()
   for _, entry in ipairs(ENTRIES) do
     local portrait, path = FindPortrait(entry)
+    Say(string.format("%-12s %s", entry.unit, portrait and ("portrait at " .. path .. (entry.holder and ", 3D set up" or "")) or "no portrait found"))
     if entry.portrait then
       local dx, dy, radius = RingGeometry(entry)
       Say(radius and string.format("   ring found: offset %.1f, %.1f  radius %.1f  (portrait %.1f wide)", dx, dy, radius, entry.portrait:GetWidth() or 0)
         or "   ring not found in the frame picture (the custom frame uses a guess)")
     end
-    Say(string.format("%-12s %s", entry.unit, portrait and ("portrait at " .. path .. (entry.holder and ", 3D set up" or "")) or "no portrait found"))
     for _, obj in ipairs(entry.levelFound or {}) do
       Say("   hides level piece " .. tostring(obj:GetName() or obj:GetObjectType()))
     end
@@ -1747,9 +1769,11 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
   elseif cmd == "minimap" then
     SetMinimapHidden(not DB.hideMinimap)
     Say("minimap button " .. (DB.hideMinimap and "hidden" or "shown"))
+    if win and win:IsShown() then win.refresh() end -- its "Minimap button" box
   elseif cmd == "dev" then
     -- developer tools, not needed in normal use
     local sub, rest = arg:match("^(%S*)%s*(.-)$")
+    sub, rest = sub:lower(), rest:lower()
     if sub == "testparty" then
       if InCombatLockdown and InCombatLockdown() then Say("not while in combat") return end
       testParty = not testParty
@@ -1927,6 +1951,10 @@ frame:SetScript("OnEvent", function(self, event, arg1)
   elseif event == "UNIT_TARGET" then
     RefreshUnit("targettarget", false)
   else
+    -- leaving combat: lift the bars above the custom frame if that was not allowed earlier
+    if event == "PLAYER_REGEN_ENABLED" then
+      for _, entry in ipairs(ENTRIES) do LiftContent(entry) end
+    end
     RefreshAll(false)
   end
 end)
