@@ -21,6 +21,7 @@ local DEFAULTS = { enabled = true, scale = 0.85, zoom = 1, petScale = 0.85, petZ
 
 local GLOW_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RoundedGlow"
 local GLOW_RATIO = 0.80 -- how much of the glow picture the framed square fills
+local LEVEL_ATLAS = "ui-hud-unitframe-smallcircle" -- Blizzard's level circle
 
 -- Custom frames: a rounded-square border (Textures\RoundedFrameBlend.tga, made by
 -- tools\make_blend_frame.py) shaded like Blizzard's ring and drawn at the ring's own
@@ -465,7 +466,7 @@ function ScanLevel(root, found, seen, depth, skip)
   for _, region in ipairs({ root:GetRegions() }) do
     local atlas = region.GetAtlas and region:GetAtlas()
     if type(atlas) == "string" and not seen[region] then
-      if atlas:lower() == "ui-hud-unitframe-smallcircle" then
+      if atlas:lower() == LEVEL_ATLAS then
         seen[region] = true
         found[#found + 1] = region
       end
@@ -729,32 +730,40 @@ local function Setup(entry)
   -- A level badge of our own, since Blizzard's sits under the model.
   if entry.level then
     local badge = CreateFrame("Frame", nil, holder)
-    -- Round layers, outside in: faint dark outline, thin pale-bronze ring, brown disc
-    -- (Blizzard's level circle has a thin tan ring around a dark brown centre).
-    local ROUND = "Interface/CharacterFrame/TempPortraitAlphaMask"
-    local function Layer(inset, sub, r, g, bl, a)
-      local tex = badge:CreateTexture(nil, "ARTWORK", nil, sub)
-      tex:SetPoint("TOPLEFT", inset, -inset)
-      tex:SetPoint("BOTTOMRIGHT", -inset, inset)
-      tex:SetColorTexture(r, g, bl, a or 1)
-      local mask = badge:CreateMaskTexture()
-      mask:SetPoint("TOPLEFT", inset, -inset)
-      mask:SetPoint("BOTTOMRIGHT", -inset, inset)
-      mask:SetTexture(ROUND, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-      tex:AddMaskTexture(mask)
-      return tex
+    -- Blizzard's own level circle (a bronze ring around a dark brown disc, in the unit
+    -- frame picture); our drawn copy below when the game does not have that atlas.
+    local art = badge:CreateTexture(nil, "ARTWORK")
+    art:SetAllPoints(badge)
+    local hasAtlas = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(LEVEL_ATLAS)
+    if not (hasAtlas and pcall(art.SetAtlas, art, LEVEL_ATLAS)) then
+      art:Hide()
+      -- Round layers, outside in: faint dark outline, thin pale-bronze ring, brown disc
+      -- (Blizzard's level circle has a thin tan ring around a dark brown centre).
+      local ROUND = "Interface/CharacterFrame/TempPortraitAlphaMask"
+      local function Layer(inset, sub, r, g, bl, a)
+        local tex = badge:CreateTexture(nil, "ARTWORK", nil, sub)
+        tex:SetPoint("TOPLEFT", inset, -inset)
+        tex:SetPoint("BOTTOMRIGHT", -inset, inset)
+        tex:SetColorTexture(r, g, bl, a or 1)
+        local mask = badge:CreateMaskTexture()
+        mask:SetPoint("TOPLEFT", inset, -inset)
+        mask:SetPoint("BOTTOMRIGHT", -inset, inset)
+        mask:SetTexture(ROUND, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+        tex:AddMaskTexture(mask)
+        return tex
+      end
+      Layer(0, 0, 0.03, 0.02, 0.01, 0.55)
+      local ring = badge:CreateTexture(nil, "ARTWORK", nil, 1)
+      ring:SetPoint("TOPLEFT", 0.5, -0.5)
+      ring:SetPoint("BOTTOMRIGHT", -0.5, 0.5)
+      local RING_FILE = "Interface/AddOns/Portraits3D/Textures/BadgeRing"
+      CheckLoaded(ring:SetTexture(RING_FILE), RING_FILE)
+      local disc = badge:CreateTexture(nil, "ARTWORK", nil, 2)
+      disc:SetPoint("TOPLEFT", 2, -2)
+      disc:SetPoint("BOTTOMRIGHT", -2, 2)
+      local DISC_FILE = "Interface/AddOns/Portraits3D/Textures/BadgeDisc"
+      CheckLoaded(disc:SetTexture(DISC_FILE), DISC_FILE)
     end
-    Layer(0, 0, 0.03, 0.02, 0.01, 0.55)
-    local ring = badge:CreateTexture(nil, "ARTWORK", nil, 1)
-    ring:SetPoint("TOPLEFT", 0.5, -0.5)
-    ring:SetPoint("BOTTOMRIGHT", -0.5, 0.5)
-    local RING_FILE = "Interface/AddOns/Portraits3D/Textures/BadgeRing"
-    CheckLoaded(ring:SetTexture(RING_FILE), RING_FILE)
-    local disc = badge:CreateTexture(nil, "ARTWORK", nil, 2)
-    disc:SetPoint("TOPLEFT", 2, -2)
-    disc:SetPoint("BOTTOMRIGHT", -2, 2)
-    local DISC_FILE = "Interface/AddOns/Portraits3D/Textures/BadgeDisc"
-    CheckLoaded(disc:SetTexture(DISC_FILE), DISC_FILE)
     local text = badge:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     text:SetPoint("CENTER", badge, "CENTER", 0, 0)
     badge:Hide()
