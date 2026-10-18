@@ -15,7 +15,7 @@ local addonName = ...
 local DEFAULTS = { enabled = true, scale = 0.85, zoom = 1, petScale = 0.85, petZoom = 1,
   targetScale = 0.85, targetZoom = 1, partyScale = 0.85, partyZoom = 1, anim = "full",
   hideMinimap = true, square = true, background = "black",
-  showBadge = true, showGlow = true, showZzz = true, greyDead = true, hideCombatText = false, hideSwords = false, gradient = 1, gradientAlpha = 1,
+  showBadge = true, showGlow = true, showZzz = true, hideCombatText = false, hideSwords = false, gradient = 1, gradientAlpha = 1,
   turn = 0, targetTurn = 0, partyTurn = 0, petTurn = 0, universal = false,
   offX = 0, offY = 0, targetOffX = 0, targetOffY = 0, partyOffX = 0, partyOffY = 0, petOffX = 0, petOffY = 0 }
 
@@ -320,7 +320,6 @@ end
 -- Dead, ghost and offline units are shown black and white and dimmed, like the
 -- game's own portraits.
 local function IsGrey(unit)
-  if DB.greyDead == false then return false end
   local ok, dead = pcall(UnitIsDeadOrGhost, unit)
   return (ok and dead == true) or not UnitIsConnected(unit)
 end
@@ -1040,7 +1039,7 @@ local function Refresh(entry, force)
   local wanted = DB.enabled and DB.frames[GroupOf(entry)] ~= false
   -- A disconnected unit has no 3D model; its flat portrait is shown grey instead,
   -- and given its colour back once the unit is online again (or the option is off).
-  local offline = wanted and DB.greyDead ~= false and UnitExists(unit) and not UnitIsConnected(unit)
+  local offline = wanted and UnitExists(unit) and not UnitIsConnected(unit)
   if offline and not entry.flatGreyed then
     entry.flatGreyed = true
     pcall(entry.portrait.SetDesaturated, entry.portrait, true)
@@ -1066,7 +1065,7 @@ local function Refresh(entry, force)
   end
   -- (before Decorate, which draws the background) no model, or a dead unit's: the
   -- grey-to-transparent background, which the see-through ghost shows through
-  entry.empty = not use3D or (DB.greyDead ~= false and IsDead(unit))
+  entry.empty = not use3D or IsDead(unit)
   GreyBar(entry, not online)
   for _, bolt in ipairs(BlizzBolts(entry)) do Hush(bolt, true) end
   Decorate(entry, true)
@@ -1648,13 +1647,10 @@ local function BuildWindow()
   AddCheck("Status glow", 28, -296, function() return DB.showGlow ~= false end,
     function(on) DB.showGlow = on; RefreshAll(true) end,
     "A soft pulse around the player and pet frames: gold while resting, red in combat (Custom frames only).", IsSquare)
-  AddCheck("Grey when dead", 168, -296, function() return DB.greyDead ~= false end,
-    function(on) DB.greyDead = on; RefreshAll(true) end,
-    "Dead units are shown as a see-through black-and-white ghost; offline players black and white.")
-  AddCheck("Hide combat text", 28, -318, function() return DB.hideCombatText == true end,
+  AddCheck("Hide combat text", 168, -296, function() return DB.hideCombatText == true end,
     function(on) DB.hideCombatText = on; RefreshAll(true) end,
     "Hides the damage and healing numbers that pop up over the player and pet portraits.")
-  AddCheck("Hide combat icon", 168, -318, function() return DB.hideSwords == true end,
+  AddCheck("Hide combat icon", 28, -318, function() return DB.hideSwords == true end,
     function(on) DB.hideSwords = on; RefreshAll(true) end,
     "Hides the crossed swords that show on your portrait during combat.")
 
@@ -1797,7 +1793,7 @@ local function BuildWindow()
     DB.universal = DEFAULTS.universal
     SetBackground(DEFAULTS.background)
     DB.showBadge, DB.showGlow = DEFAULTS.showBadge, DEFAULTS.showGlow
-    DB.showZzz, DB.greyDead, DB.hideCombatText, DB.hideSwords = DEFAULTS.showZzz, DEFAULTS.greyDead, DEFAULTS.hideCombatText, DEFAULTS.hideSwords
+    DB.showZzz, DB.hideCombatText, DB.hideSwords = DEFAULTS.showZzz, DEFAULTS.hideCombatText, DEFAULTS.hideSwords
     SetNumber("gradient", DEFAULTS.gradient)
     SetNumber("gradientAlpha", DEFAULTS.gradientAlpha)
     SetMinimapHidden(DEFAULTS.hideMinimap)
@@ -2181,6 +2177,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     if type(DB.frames) ~= "table" then DB.frames = {} end
     DB.borderColor = nil -- the frame colour options were removed
     DB.icon = nil -- the icon picker was removed
+    DB.greyDead = nil -- dead / offline units are always shown grey now (the option was removed)
     DB.version = DB.version or 10
     -- 11: target and party got their own size / zoom; start them from the player's.
     if DB.version < 11 then
