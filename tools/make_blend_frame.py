@@ -1,4 +1,4 @@
-"""Draws the "blended" rounded-square look (an alternative to RoundedFrame.tga):
+"""Draws the custom frame's textures:
 
   Textures/RoundedFrameBlend.tga  a rounded-square border shaded like Blizzard's
                                   portrait ring: two thin gold lines with a dark
@@ -10,6 +10,7 @@
                                   except a round hole that removes the ring.
   Textures/RingHoleCut.tga        the same with a straight side towards the bars
   (+ Mirror)                      (used in game), so the plate's edge line is kept.
+  Textures/FrameShadow.tga        a soft dark shadow drawn under the frame.
 
 The colours and band widths were measured from the game's unit frame picture
 (the player ring is 34 px in radius; this band is about 5 px wide).
@@ -19,7 +20,7 @@ import numpy as np
 
 SIZE, SS = 256, 4
 RING_R = 34.0          # Blizzard's player ring radius in its picture's pixels; one pixel = 1 / RING_R
-HOLE = 0.85            # hole width as a fraction of the picture; keep in sync with HOLE_BLEND in Portraits3D.lua
+HOLE = 0.85            # hole width as a fraction of the picture; keep in sync with HOLE in Portraits3D.lua
 R_OUT = 0.28           # corner radius of the outer edge (fraction of the half width)
 HOLE_DISC = 0.84       # RingHole.tga: the hole's diameter as a fraction of the picture; keep in sync with Portraits3D.lua
 
@@ -173,6 +174,22 @@ flat_px = hole_px.copy()
 flat_px[..., 3] = (hk * 255 + 0.5).astype(np.uint8)
 tga("Textures/RingHoleCut.tga", flat_px)
 tga("Textures/RingHoleCutMirror.tga", np.ascontiguousarray(flat_px[:, ::-1]))
+
+# ---- FrameShadow.tga: a soft dark shadow around the frame, like the game's frame parts
+# have (a dark fringe about 2 px wide, strongest under them). The frame fills
+# SHADOW_RATIO of the picture; the shadow is dark under the frame's band and fades out
+# over about 3 Blizzard px beyond its edge, and is clear inside the frame's hole so it
+# never darkens the portrait. Drawn a little lower than the frame in game.
+SHADOW_RATIO = 0.86    # keep in sync with Portraits3D.lua
+SW = 3.0 / RING_R      # fade width, as a fraction of the frame's half width
+sd = rrect_sdf(x, y, SHADOW_RATIO, R_OUT * SHADOW_RATIO) / SHADOW_RATIO   # in frame half widths
+inner = rrect_sdf(x, y, SHADOW_RATIO * HOLE, max(R_OUT - (1 - HOLE), 0.06) * SHADOW_RATIO) / SHADOW_RATIO
+sh = np.where(sd > 0, 0.62 * np.clip(1 - sd / SW, 0, 1) ** 2, 0.62)
+sh = np.where(inner < 0, 0.0, sh)
+sa = down_(sh)
+shadow_px = np.zeros((SIZE, SIZE, 4), dtype=np.uint8)
+shadow_px[..., 3] = (np.clip(sa, 0, 1) * 255 + 0.5).astype(np.uint8)
+tga("Textures/FrameShadow.tga", shadow_px)
 
 if len(sys.argv) > 1:   # optional preview on a dark background
     bg = np.array([20, 20, 20], float)
