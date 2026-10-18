@@ -44,7 +44,7 @@ For troubleshooting (`/p3d dev` lists them all):
 
 - Model frames cannot be masked to a circle, so the addon hides the corners behind the unit frame's ring art (round frames) or draws its own border over the model (custom frames).
 - The custom frames find Blizzard's ring from the part of the game's unit frame picture each frame shows; the ring positions were measured from that picture (see `RINGS` in `Portraits3D.lua`). Other UI addons that restyle the unit frames will not line up.
-- `tools/make_blend_frame.py` and `tools/make_frame.py` (need numpy) redraw the textures in `Textures/`. The game keeps a texture it has loaded until it restarts, so when one changes, save it under a new name.
+- `tools/make_blend_frame.py`, `tools/make_frame.py` and `tools/make_bolt.py` (need numpy) redraw the textures in `Textures/`. The game keeps a texture it has loaded until it restarts, so when one changes, save it under a new name.
 
 ## License
 

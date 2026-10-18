@@ -642,9 +642,8 @@ local function Layout(entry)
       entry.shadow:SetPoint("CENTER", entry.border, "CENTER", 0, -SHADOW_DROP * radius / (ring and ring.r or radius))
     end
     clip:SetSize(size * HOLE, size * HOLE)
-    -- (the bolt picture has wide empty margins; this makes the bolt itself about as
-    -- big in the frame as Blizzard's is on the party frames)
-    if entry.dcIcon then entry.dcIcon:SetSize(size * HOLE * 1.6, size * HOLE * 1.6) end
+    -- about as big in the frame as Blizzard's bolt is on the party frames
+    if entry.dcIcon then entry.dcIcon:SetSize(size * 0.7, size * 0.7) end
     if entry.badge then
       local b = math.max(22, size * 0.42)
       local inset = size * 0.08
@@ -763,12 +762,19 @@ local function Setup(entry)
     ApplyCamera(entry)
     if entry.lookUnit then ApplyLook(entry, entry.lookUnit) end -- loading resets the colour
   end)
-  -- the disconnect bolt, on frames that have no bolt of Blizzard's (target, focus...)
+  -- the disconnect bolt (Blizzard's own is hidden on the party frames)
   local dcIcon = clip:CreateTexture(nil, "OVERLAY")
   dcIcon:SetPoint("CENTER", clip, "CENTER")
   dcIcon:SetSize(1, 1) -- sized by Layout
   dcIcon:Hide()
-  if dcIcon:SetTexture("Interface/CharacterFrame/Disconnect-Icon") ~= false then entry.dcIcon = dcIcon end
+  -- our own large drawing of the game's bolt (tools\make_bolt.py); the game's is
+  -- small and looked pixelated at this size
+  local BOLT_FILE = "Interface/AddOns/Portraits3D/Textures/DisconnectBolt6"
+  -- trilinear: smoothed properly when drawn smaller than the picture
+  local loaded = dcIcon:SetTexture(BOLT_FILE, "CLAMP", "CLAMP", "TRILINEAR")
+  CheckLoaded(loaded, BOLT_FILE)
+  if loaded == false then loaded = dcIcon:SetTexture("Interface/CharacterFrame/Disconnect-Icon") end
+  if loaded ~= false then entry.dcIcon = dcIcon end
 
   -- The border picture sits in its own frame above the model.
   local border = CreateFrame("Frame", nil, holder)
@@ -965,11 +971,35 @@ local function GreyBar(entry, on)
   end
 end
 
+-- Blizzard's own disconnect bolt on the party frames, hidden while ours is drawn:
+-- any picture in the frame stored under a key with "disconnect" in it.
+local function BlizzBolts(entry)
+  if entry.blizzBolts then return entry.blizzBolts end
+  local list, seen = {}, {}
+  local function walk(frame, depth)
+    if type(frame) ~= "table" or seen[frame] or depth > 2 or frame == entry.holder then return end
+    seen[frame] = true
+    for key, value in pairs(frame) do
+      if type(key) == "string" and type(value) == "table" and value ~= frame and value.SetAlpha
+          and key:lower():find("disconnect", 1, true) then
+        list[#list + 1] = value
+      end
+    end
+    if frame.GetChildren then
+      for _, child in ipairs({ frame:GetChildren() }) do walk(child, depth + 1) end
+    end
+  end
+  if entry.root then walk(Resolve(entry.root), 0) end
+  entry.blizzBolts = list
+  return list
+end
+
 local function Show2D(entry)
   entry.state = nil
   entry.holder:Hide()
   entry.border:Hide()
   GreyBar(entry, false)
+  for _, bolt in ipairs(BlizzBolts(entry)) do Hush(bolt, false) end
   ApplyRingCut(entry) -- Blizzard's frame again: give it its ring back
   Decorate(entry, false)
   for _, piece in ipairs(FlatPieces(entry)) do Hush(piece, false); Cover2D(entry, piece, false) end
@@ -1018,6 +1048,7 @@ local function Refresh(entry, force)
   end
   entry.empty = not use3D -- (before Decorate, which draws the background)
   GreyBar(entry, not online)
+  for _, bolt in ipairs(BlizzBolts(entry)) do Hush(bolt, true) end
   Decorate(entry, true)
   for _, piece in ipairs(FlatPieces(entry)) do
     if (piece:GetAlpha() or 0) > 0 then Hush(piece, true) end
@@ -1027,8 +1058,7 @@ local function Refresh(entry, force)
     if entry.state == state and not force then return end
     entry.state = state
     entry.model:Hide()
-    -- the party frames draw Blizzard's own bolt on top; the others get ours
-    if entry.dcIcon then entry.dcIcon:SetShown(not online and not entry.unit:match("^party")) end
+    if entry.dcIcon then entry.dcIcon:SetShown(not online) end
     entry.holder:Show()
     entry.border:SetShown(DB.square)
     ApplyRingCut(entry)
@@ -1036,7 +1066,7 @@ local function Refresh(entry, force)
     for _, piece in ipairs(FlatPieces(entry)) do Hush(piece, true); Cover2D(entry, piece, true) end
     return
   end
-  if entry.dcIcon then entry.dcIcon:SetShown(not online and not entry.unit:match("^party")) end
+  if entry.dcIcon then entry.dcIcon:SetShown(not online) end
   entry.lookUnit = unit
   ApplyLook(entry, unit)
   local state = guid .. ":" .. tostring(UnitIsDead(unit) and true or false)
