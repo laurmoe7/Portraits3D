@@ -1271,7 +1271,7 @@ local SIZE_GROUPS = {
 local function BuildWindow()
   local ok, f = pcall(CreateFrame, "Frame", "Portraits3DOptions", UIParent, "BackdropTemplate")
   if not ok then f = CreateFrame("Frame", "Portraits3DOptions", UIParent) end
-  f:SetSize(660, 632)
+  f:SetSize(660, 612)
   f:SetPoint("CENTER", UIParent, "CENTER", 200, 0) -- out of the way of the unit frames
   f:SetFrameStrata("DIALOG")
   f:SetClampedToScreen(true)
@@ -1290,43 +1290,88 @@ local function BuildWindow()
   end
   tinsert(UISpecialFrames, "Portraits3DOptions") -- Escape closes it
 
+  -- A vertical shade on a texture, from `bottom` to `top` alpha (flat if the game
+  -- has no gradients).
+  local function Shade(tex, r, g, b, bottom, top)
+    tex:SetColorTexture(1, 1, 1, 1)
+    local done = CreateColor and pcall(tex.SetGradient, tex, "VERTICAL", CreateColor(r, g, b, bottom), CreateColor(r, g, b, top))
+    if not done and not pcall(tex.SetGradientAlpha, tex, "VERTICAL", r, g, b, bottom, r, g, b, top) then
+      tex:SetColorTexture(r, g, b, (bottom + top) / 2)
+    end
+  end
+
+  -- Header: the addon's icon, its name and version, and a gold line under them.
+  local icon = f:CreateTexture(nil, "ARTWORK")
+  icon:SetTexture("Interface/Icons/Achievement_Character_Human_Female")
+  icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+  icon:SetSize(32, 32)
+  icon:SetPoint("TOPLEFT", 22, -18)
+  local iconEdge = f:CreateTexture(nil, "BORDER")
+  iconEdge:SetColorTexture(1, 0.82, 0, 0.6)
+  iconEdge:SetPoint("TOPLEFT", icon, "TOPLEFT", -1, 1)
+  iconEdge:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 1, -1)
   local title = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-  title:SetPoint("TOPLEFT", 22, -20)
+  title:SetPoint("TOPLEFT", icon, "TOPRIGHT", 10, -1)
   title:SetText("Portraits 3D: Forever Frames")
+  local getMeta = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+  local version = getMeta and getMeta(addonName, "Version")
+  local sub = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+  sub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -3)
+  sub:SetTextColor(0.65, 0.65, 0.65)
+  sub:SetText((version and ("Version " .. version .. "   -   ") or "") .. "/p3d opens this window")
+  local rule = f:CreateTexture(nil, "ARTWORK")
+  rule:SetPoint("TOPLEFT", 16, -60)
+  rule:SetPoint("TOPRIGHT", -16, -60)
+  rule:SetHeight(1)
+  rule:SetColorTexture(1, 0.82, 0, 0.45)
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", -6, -6)
 
   local controls = {}
   local colX = 0 -- x offset of the column being built
+  local DIM = 0.45 -- how bright a control is drawn while it does nothing
 
-  -- A shaded card with a gold bar on its left edge and a heading.
+  -- A softly shaded card with a gold bar on its left edge, a heading and a faint
+  -- line running on from the heading.
   local function AddSection(label, top, height)
     local card = f:CreateTexture(nil, "BACKGROUND", nil, 1)
-    card:SetColorTexture(1, 1, 1, 0.05)
     card:SetPoint("TOPLEFT", 16 + colX, top)
     card:SetSize(298, height)
-    local bar = f:CreateTexture(nil, "BACKGROUND", nil, 2)
-    bar:SetColorTexture(1, 0.82, 0, 0.8)
+    Shade(card, 1, 1, 1, 0.025, 0.075)
+    local edge = f:CreateTexture(nil, "BACKGROUND", nil, 2)
+    edge:SetColorTexture(1, 1, 1, 0.1)
+    edge:SetPoint("TOPLEFT", card, "TOPLEFT")
+    edge:SetPoint("TOPRIGHT", card, "TOPRIGHT")
+    edge:SetHeight(1)
+    local bar = f:CreateTexture(nil, "BACKGROUND", nil, 3)
     bar:SetPoint("TOPLEFT", card, "TOPLEFT")
     bar:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT")
     bar:SetWidth(2)
+    Shade(bar, 1, 0.82, 0, 0.25, 0.9)
     local text = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    text:SetPoint("TOPLEFT", card, "TOPLEFT", 12, -6)
+    text:SetPoint("TOPLEFT", card, "TOPLEFT", 12, -7)
     text:SetText(label)
+    local line = f:CreateTexture(nil, "ARTWORK")
+    line:SetPoint("LEFT", text, "RIGHT", 8, 0)
+    line:SetPoint("RIGHT", card, "RIGHT", -12, 0)
+    line:SetHeight(1)
+    line:SetColorTexture(1, 0.82, 0, 0.2)
   end
 
-  -- A check box; showIf (optional) hides it while it returns false.
-  local function AddCheck(label, x, y, get, set, showIf, tip)
+  -- A check box with its label (the label can be clicked too). tip (optional) is
+  -- shown on hover; enabledIf (optional) greys it out while it returns false.
+  local function AddCheck(label, x, y, get, set, tip, enabledIf)
     local box = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
     box:SetSize(24, 24)
     box:SetPoint("TOPLEFT", x + colX, y)
     local text = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     text:SetPoint("LEFT", box, "RIGHT", 2, 0)
     text:SetText(label)
+    box:SetHitRectInsets(0, -((text:GetStringWidth() or 100) + 6), 0, 0)
+    -- a greyed-out box still shows its tip, which says why
+    if box.SetMotionScriptsWhileDisabled then box:SetMotionScriptsWhileDisabled(true) end
     box:SetScript("OnClick", function(self) set(self:GetChecked() and true or false) end)
     if tip then
-      -- the hover area covers the label too
-      box:SetHitRectInsets(0, -((text:GetStringWidth() or 100) + 6), 0, 0)
       box:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(label)
@@ -1337,16 +1382,16 @@ local function BuildWindow()
     end
     controls[#controls + 1] = function()
       box:SetChecked(get())
-      if showIf then
-        local show = showIf()
-        box:SetShown(show); text:SetShown(show)
-      end
+      local on = not enabledIf or enabledIf()
+      box:SetEnabled(on)
+      if on then text:SetTextColor(1, 1, 1) else text:SetTextColor(DIM, DIM, DIM) end
     end
   end
 
   -- A slider on a saved number. key is the setting's name, or a function that
-  -- returns it (the size card edits a different setting per frame group).
-  local function AddSlider(key, label, lo, hi, y, step, showIf)
+  -- returns it (the camera card edits a different setting per frame group).
+  -- Right-click puts it back to its default; enabledIf (optional) greys it out.
+  local function AddSlider(key, label, lo, hi, y, step, enabledIf)
     local function Key() return type(key) == "function" and key() or key end
     local fmt = step >= 1 and "%d°" or "%.2f" -- whole numbers are degrees
     local text = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
@@ -1369,14 +1414,33 @@ local function BuildWindow()
       if self.syncing or math.abs((DB[Key()] or 0) - v) < 1e-6 then return end
       SetNumber(Key(), v)
     end)
+    slider:SetScript("OnMouseUp", function(_, button)
+      if button == "RightButton" and DEFAULTS[Key()] ~= nil then
+        SetNumber(Key(), DEFAULTS[Key()])
+        f.refresh()
+      end
+    end)
+    slider:SetScript("OnEnter", function(self)
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:SetText(label)
+      GameTooltip:AddLine("Right-click: back to the default", 1, 1, 1)
+      GameTooltip:Show()
+    end)
+    slider:SetScript("OnLeave", function() GameTooltip:Hide() end)
     controls[#controls + 1] = function()
       slider.syncing = true
       slider:SetValue(DB[Key()] or 0)
       slider.syncing = false
       value:SetText(string.format(fmt, DB[Key()] or 0))
-      if showIf then
-        local show = showIf()
-        text:SetShown(show); value:SetShown(show); slider:SetShown(show)
+      local on = not enabledIf or enabledIf()
+      slider:EnableMouse(on)
+      slider:SetAlpha(on and 1 or DIM)
+      if on then
+        text:SetTextColor(1, 1, 1)
+        value:SetTextColor(1, 0.82, 0)
+      else
+        text:SetTextColor(DIM, DIM, DIM)
+        value:SetTextColor(DIM, DIM, DIM)
       end
     end
   end
@@ -1388,56 +1452,61 @@ local function BuildWindow()
   end
 
   local function IsRound() return not DB.square end
+  local function IsSquare() return DB.square == true end
 
   -- Two check boxes per row, for a list of { key, label } choices.
   local function AddChoices(list, top, current, apply)
     for i, item in ipairs(list) do
-      AddCheck(item.label, i % 2 == 1 and 28 or 178, top - math.floor((i - 1) / 2) * 22,
+      AddCheck(item.label, i % 2 == 1 and 28 or 168, top - math.floor((i - 1) / 2) * 22,
         function() return current() == item.key end,
         function() apply(item.key); f.refresh() end)
     end
   end
 
   -- ===== Left column =====
-  AddSection("GENERAL", -44, 76)
-  AddCheck("Custom frames", 28, -70, function() return DB.square end,
-    function(on) SetSquare(on); f.refresh() end, nil,
+  AddSection("GENERAL", -72, 58)
+  AddCheck("Custom frames", 28, -98, function() return DB.square end,
+    function(on) SetSquare(on); f.refresh() end,
     "Portraits 3D's own rounded-square portrait frames, in place of Blizzard's round ones, shaded to match the rest of the unit frame. Turn off to show the 3D model in Blizzard's round frames.")
-  AddCheck("Minimap button", 28, -92, function() return not DB.hideMinimap end,
+  AddCheck("Minimap button", 168, -98, function() return not DB.hideMinimap end,
     function(on) SetMinimapHidden(not on) end)
 
-  AddSection("FRAMES", -126, 98)
-  FrameCheck("player", 28, -152)
-  FrameCheck("target", 178, -152)
-  FrameCheck("targettarget", 28, -174)
-  FrameCheck("focus", 178, -174)
-  FrameCheck("party", 28, -196)
-  FrameCheck("pet", 178, -196)
+  AddSection("FRAMES", -138, 102)
+  FrameCheck("player", 28, -164)
+  FrameCheck("target", 168, -164)
+  FrameCheck("targettarget", 28, -186)
+  FrameCheck("focus", 168, -186)
+  FrameCheck("party", 28, -208)
+  FrameCheck("pet", 168, -208)
 
-  AddSection("ICONS & EFFECTS", -230, 120)
-  AddCheck("Level badge", 28, -256, function() return DB.showBadge ~= false end,
-    function(on) DB.showBadge = on; RefreshAll(true) end)
-  AddCheck("Resting / combat glow", 140, -256, function() return DB.showGlow ~= false end,
-    function(on) DB.showGlow = on; RefreshAll(true) end)
-  AddCheck("Grey when dead / DC'd", 140, -278, function() return DB.greyDead ~= false end,
-    function(on) DB.greyDead = on; RefreshAll(true) end)
-  AddCheck("Resting Zzz", 28, -278, function() return DB.showZzz ~= false end,
-    function(on) DB.showZzz = on; RefreshAll(true) end)
-
-  AddCheck("Hide combat indicator", 28, -322, function() return DB.hideSwords == true end,
-    function(on) DB.hideSwords = on; RefreshAll(true) end, nil,
+  AddSection("ICONS & EFFECTS", -248, 102)
+  AddCheck("Level badge", 28, -274, function() return DB.showBadge ~= false end,
+    function(on) DB.showBadge = on; RefreshAll(true) end,
+    "The level on a round badge at the frame's corner (Custom frames only).", IsSquare)
+  AddCheck("Resting Zzz", 168, -274, function() return DB.showZzz ~= false end,
+    function(on) DB.showZzz = on; RefreshAll(true) end,
+    "The rising Zzz on your portrait in a rested area.")
+  AddCheck("Status glow", 28, -296, function() return DB.showGlow ~= false end,
+    function(on) DB.showGlow = on; RefreshAll(true) end,
+    "A soft pulse around the player and pet frames: gold while resting, red in combat (Custom frames only).", IsSquare)
+  AddCheck("Grey when dead", 168, -296, function() return DB.greyDead ~= false end,
+    function(on) DB.greyDead = on; RefreshAll(true) end,
+    "Dead and ghost units are shown grey and dimmed; offline party members' portraits turn grey.")
+  AddCheck("Hide combat text", 28, -318, function() return DB.hideCombatText == true end,
+    function(on) DB.hideCombatText = on; RefreshAll(true) end,
+    "Hides the damage and healing numbers that pop up over the player and pet portraits.")
+  AddCheck("Hide combat icon", 168, -318, function() return DB.hideSwords == true end,
+    function(on) DB.hideSwords = on; RefreshAll(true) end,
     "Hides the crossed swords that show on your portrait during combat.")
-  AddCheck("Hide combat text", 28, -300, function() return DB.hideCombatText == true end,
-    function(on) DB.hideCombatText = on; RefreshAll(true) end)
 
-  AddSection("BACKGROUND", -356, 168)
-  AddChoices(BACKGROUNDS, -382, function() return DB.background or "black" end, SetBackground)
+  AddSection("BACKGROUND", -358, 166)
+  AddChoices(BACKGROUNDS, -384, function() return DB.background or "black" end, SetBackground)
   local function IsGradient()
     local mode = DB.background or "black"
     return mode == "gradient" or mode == "class"
   end
-  AddSlider("gradient", "Gradient height", 0.1, 1, -430, 0.05, IsGradient)
-  AddSlider("gradientAlpha", "Gradient opacity", 0.1, 1, -476, 0.05, IsGradient)
+  AddSlider("gradient", "Gradient height", 0.1, 1, -436, 0.05, IsGradient)
+  AddSlider("gradientAlpha", "Gradient opacity", 0.1, 1, -482, 0.05, IsGradient)
 
   -- ===== Right column =====
   colX = COLUMN
@@ -1453,9 +1522,9 @@ local function BuildWindow()
     local prefix = Prefix()
     return prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))
   end
-  
-  AddSection("CAMERA & POSITION", -44, 384)
-  AddCheck("Same for all frames", 28, -70, function() return DB.universal end,
+
+  AddSection("CAMERA & POSITION", -72, 376)
+  AddCheck("Same for all frames", 28, -98, function() return DB.universal end,
     function(on)
       DB.universal = on
       for _, entry in ipairs(ENTRIES) do
@@ -1463,21 +1532,25 @@ local function BuildWindow()
         if entry.model and entry.holder:IsShown() then ApplyCamera(entry) end
       end
       f.refresh()
-    end)
+    end,
+    "One set of camera and position settings for every frame, instead of one per frame group.")
   -- Tabs choose which frames the sliders below edit.
   local tabs = {}
   for i, group in ipairs(SIZE_GROUPS) do
     local tab = CreateFrame("Button", nil, f)
     tab:SetSize(66, 24)
-    tab:SetPoint("TOPLEFT", 28 + colX + (i - 1) * 68, -98)
+    tab:SetPoint("TOPLEFT", 28 + colX + (i - 1) * 68, -126)
     local back = tab:CreateTexture(nil, "BACKGROUND")
     back:SetAllPoints()
     local line = tab:CreateTexture(nil, "ARTWORK")
     line:SetPoint("BOTTOMLEFT")
     line:SetPoint("BOTTOMRIGHT")
     line:SetHeight(2)
+    local hover = tab:CreateTexture(nil, "HIGHLIGHT")
+    hover:SetAllPoints()
+    hover:SetColorTexture(1, 1, 1, 0.08)
     local label = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    label:SetPoint("CENTER")
+    label:SetPoint("CENTER", 0, 1)
     label:SetText(group.label)
     tab:SetScript("OnClick", function() selected = group.key; f.refresh() end)
     tab:SetScript("OnEnter", function(self)
@@ -1489,17 +1562,17 @@ local function BuildWindow()
     tabs[i] = { tab = tab, back = back, line = line, label = label, key = group.key }
   end
   local covers = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-  covers:SetPoint("TOPLEFT", 30 + colX, -126)
-  covers:SetTextColor(0.75, 0.75, 0.75)
+  covers:SetPoint("TOPLEFT", 30 + colX, -156)
+  covers:SetTextColor(0.65, 0.65, 0.65)
   controls[#controls + 1] = function()
     for _, t in ipairs(tabs) do
       local on = t.key == selected
       t.tab:SetShown(not DB.universal)
-      t.back:SetColorTexture(1, 1, 1, on and 0.16 or 0.05)
+      Shade(t.back, 1, 1, 1, on and 0.1 or 0.03, on and 0.2 or 0.06)
       t.line:SetColorTexture(1, 0.82, 0, on and 0.9 or 0)
       t.label:SetTextColor(on and 1 or 0.7, on and 0.82 or 0.7, on and 0 or 0.7)
     end
-    local text = "Every frame"
+    local text = "Editing: every frame"
     if not DB.universal then
       for _, group in ipairs(SIZE_GROUPS) do
         if group.key == selected then text = "Editing: " .. group.covers end
@@ -1513,29 +1586,47 @@ local function BuildWindow()
     text:SetPoint("TOPLEFT", 30 + colX, y)
     text:SetText(label)
     text:SetTextColor(1, 0.82, 0, 0.9)
+    -- a thin line from the heading to the card's right side
     local line = f:CreateTexture(nil, "ARTWORK")
     line:SetColorTexture(1, 1, 1, 0.14)
-    line:SetPoint("TOPLEFT", 30 + colX, y - 14)
-    line:SetSize(262, 1)
+    line:SetPoint("LEFT", text, "RIGHT", 6, 0)
+    line:SetPoint("RIGHT", f, "LEFT", 292 + colX, 0)
+    line:SetHeight(1)
   end
 
-  AddHeading("CAMERA", -152)
-  AddSlider(function() return K("zoom") end, "Zoom", 0, 2, -172, 0.05)
-  AddSlider(function() return K("turn") end, "Turn", -90, 90, -218, 5)
-  AddHeading("MODEL POSITION", -268)
-  AddSlider(function() return K("offX") end, "Left / right", -0.5, 0.5, -288, 0.01)
-  AddSlider(function() return K("offY") end, "Up / down", -0.5, 0.5, -334, 0.01)
+  AddHeading("CAMERA", -180)
+  AddSlider(function() return K("zoom") end, "Zoom", 0, 2, -198, 0.05)
+  AddSlider(function() return K("turn") end, "Turn", -90, 90, -244, 5)
+  AddHeading("MODEL POSITION", -294)
+  AddSlider(function() return K("offX") end, "Left / right", -0.5, 0.5, -312, 0.01)
+  AddSlider(function() return K("offY") end, "Up / down", -0.5, 0.5, -358, 0.01)
   -- only the round frames clip the model to a size of its own
-  AddSlider(function() return K("scale") end, "Model size", 0.5, 1.2, -380, 0.05, IsRound)
+  AddSlider(function() return K("scale") end, "Model size (round frames)", 0.5, 1.2, -404, 0.05, IsRound)
 
-  AddSection("ANIMATION", -436, 76)
-  AddChoices(ANIMATIONS, -462, function() return DB.anim end, SetAnimationMode)
+  AddSection("ANIMATION", -456, 76)
+  AddChoices(ANIMATIONS, -482, function() return DB.anim end, SetAnimationMode)
+
+  -- Footer: a faint line over the buttons.
+  local foot = f:CreateTexture(nil, "ARTWORK")
+  foot:SetPoint("BOTTOMLEFT", 16, 46)
+  foot:SetPoint("BOTTOMRIGHT", -16, 46)
+  foot:SetHeight(1)
+  foot:SetColorTexture(1, 1, 1, 0.12)
 
   local borderBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   borderBtn:SetSize(150, 22)
   borderBtn:SetPoint("BOTTOMLEFT", 24, 14)
   borderBtn:SetText("Elite border mover")
   borderBtn:SetScript("OnClick", ToggleBorderTest)
+  if borderBtn.SetMotionScriptsWhileDisabled then borderBtn:SetMotionScriptsWhileDisabled(true) end
+  borderBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText("Elite border mover")
+    GameTooltip:AddLine("Line up the elite, rare and boss borders on the custom target frame by hand (Custom frames only).", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  borderBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  controls[#controls + 1] = function() borderBtn:SetEnabled(DB.square == true) end
 
   local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   reset:SetSize(140, 22)
