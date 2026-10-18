@@ -304,13 +304,7 @@ end
 local function ApplyBackground(entry)
   local bg = entry.bg
   if not bg then return end
-  AnchorBackground(entry)
   local mode = DB.background or "black"
-  if mode == "clear" then
-    bg:Hide()
-    return
-  end
-  bg:Show()
   local r, g, b = 0, 0, 0
   local fade = mode == "gradient" or mode == "class"
   if mode == "class" then
@@ -321,6 +315,17 @@ local function ApplyBackground(entry)
       if c then r, g, b = c.r, c.g, c.b end
     end
   end
+  -- This runs every second; only redraw when the look has changed (a change of
+  -- size goes through Layout, which anchors the background again itself).
+  local key = table.concat({ mode, r, g, b, DB.gradient or 1, DB.gradientAlpha or 1, tostring(DB.square) }, ":")
+  if entry.bgKey == key then return end
+  entry.bgKey = key
+  AnchorBackground(entry)
+  if mode == "clear" then
+    bg:Hide()
+    return
+  end
+  bg:Show()
   local topAlpha = fade and 0 or 1
   local bottomAlpha = fade and (DB.gradientAlpha or 1) or 1 -- the gradient's opacity setting
   bg:SetColorTexture(1, 1, 1, 1)
@@ -384,15 +389,16 @@ local function Decorate(entry, active)
         end
       end
     end
-    for _, obj in ipairs(entry.swordObjects or {}) do Hush(obj, DB.hideSwords == true) end
+    -- (only while the 3D portrait is on, so turning it off gives Blizzard's frame back whole)
+    for _, obj in ipairs(entry.swordObjects or {}) do Hush(obj, active and DB.hideSwords == true) end
     for _, path in ipairs(entry.swords) do
       local obj = Resolve(path)
-      if type(obj) == "table" and obj.SetAlpha then Hush(obj, DB.hideSwords == true) end
+      if type(obj) == "table" and obj.SetAlpha then Hush(obj, active and DB.hideSwords == true) end
     end
   end
   for _, path in ipairs(entry.combat or {}) do
     local obj = Resolve(path)
-    if type(obj) == "table" and obj.SetAlpha then Hush(obj, DB.hideCombatText == true) end
+    if type(obj) == "table" and obj.SetAlpha then Hush(obj, active and DB.hideCombatText == true) end
   end
   if entry.badge and not entry.levelScanned then
     entry.levelScanned, entry.levelFound = true, {}
@@ -1609,7 +1615,8 @@ local function PlaceMinimapButton(angle)
 end
 
 local function BuildMinimapButton()
-  local button = CreateFrame("Button", "Portraits3DMinimapButton", UIParent)
+  -- on the minimap, so it hides along with it
+  local button = CreateFrame("Button", "Portraits3DMinimapButton", Minimap)
   minimapButton = button
   button:SetSize(31, 31)
   button:SetFrameStrata("HIGH")
@@ -1957,6 +1964,10 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     C_Timer.NewTicker(1, function() RefreshAll(false) end)
   elseif event == "UNIT_PORTRAIT_UPDATE" or event == "UNIT_MODEL_CHANGED" then
     RefreshUnit(arg1, true)
+    -- target of target gets no event of its own; reload it when its unit changes looks
+    if arg1 and UnitIsUnit and UnitExists("targettarget") and UnitIsUnit(arg1, "targettarget") then
+      RefreshUnit("targettarget", true)
+    end
   elseif event == "UNIT_TARGET" then
     RefreshUnit("targettarget", false)
   else
