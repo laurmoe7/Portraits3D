@@ -1096,7 +1096,7 @@ local function ToggleBorderTest()
   local ok, f = pcall(CreateFrame, "Frame", "Portraits3DBorderTest", UIParent, "BackdropTemplate")
   if not ok then f = CreateFrame("Frame", "Portraits3DBorderTest", UIParent) end
   borderTest = f
-  f:SetSize(330, 318)
+  f:SetSize(330, 334)
   f:SetPoint("CENTER", UIParent, "CENTER", -120, 120)
   f:SetFrameStrata("DIALOG")
   f:SetFrameLevel(60)
@@ -1207,7 +1207,7 @@ local function ToggleBorderTest()
   note:SetWidth(282)
   note:SetJustifyH("LEFT")
   note:SetTextColor(0.75, 0.75, 0.75)
-  note:SetText("Pick a border, adjust it, then Save.")
+  note:SetText("Picking a border shows a test border on your current target. Adjust it, then Save. None removes the test border.")
   f:SetScript("OnShow", Refresh)
   f:SetScript("OnHide", function()
     -- closing the window ends the preview
