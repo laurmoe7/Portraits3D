@@ -696,6 +696,7 @@ local function ApplyStyle(entry)
   LiftContent(entry)
   entry.clip:SetFrameLevel(base + 1)
   entry.border:SetFrameLevel(base + 3)
+  if entry.boltFrame then entry.boltFrame:SetFrameLevel(base + 3) end -- above the model (base + 2)
   if entry.badge then entry.badge:SetFrameLevel(base + 5) end -- above the dragon, below the content frame (PvP icon)
   AnchorBackground(entry)
   -- the round mask on the background, only in the round look (added once at a time)
@@ -762,9 +763,13 @@ local function Setup(entry)
     ApplyCamera(entry)
     if entry.lookUnit then ApplyLook(entry, entry.lookUnit) end -- loading resets the colour
   end)
-  -- the disconnect bolt (Blizzard's own is hidden on the party frames)
-  local dcIcon = clip:CreateTexture(nil, "OVERLAY")
-  dcIcon:SetPoint("CENTER", clip, "CENTER")
+  -- the disconnect bolt (Blizzard's own is hidden on the party frames), in a frame
+  -- of its own above the model so it stays on top of a see-through one
+  local boltFrame = CreateFrame("Frame", nil, holder)
+  boltFrame:SetAllPoints(clip)
+  entry.boltFrame = boltFrame
+  local dcIcon = boltFrame:CreateTexture(nil, "OVERLAY")
+  dcIcon:SetPoint("CENTER", boltFrame, "CENTER")
   dcIcon:SetSize(1, 1) -- sized by Layout
   dcIcon:Hide()
   -- our own large drawing of the game's bolt (tools\make_bolt.py); the game's is
@@ -1007,12 +1012,25 @@ end
 
 local testParty = false -- /p3d testparty: party frames show the player's model
 
--- Black and white for dead, ghost and offline units. Set every time (it is cheap):
--- the game resets it whenever the model is loaded again.
+-- Black and white for dead, ghost and offline units, and see-through like a ghost
+-- for dead ones. Set every time (it is cheap): the game resets it whenever the
+-- model is loaded again.
+local function IsDead(unit)
+  local ok, dead = pcall(UnitIsDeadOrGhost, unit)
+  return ok and dead == true
+end
+
 function ApplyLook(entry, unit)
   local grey = IsGrey(unit)
+  local alpha = (grey and IsDead(unit)) and 0.45 or grey and 0.75 or 1
   pcall(entry.model.SetDesaturation, entry.model, grey and 1 or 0)
-  pcall(entry.model.SetAlpha, entry.model, grey and 0.75 or 1)
+  -- the model's own transparency where the game has it, else the whole frame's
+  -- (only one of them: setting the frame's alpha too undid the model's)
+  if entry.model.SetModelAlpha then
+    pcall(entry.model.SetModelAlpha, entry.model, alpha)
+  else
+    pcall(entry.model.SetAlpha, entry.model, alpha)
+  end
 end
 
 local function Refresh(entry, force)
@@ -1046,7 +1064,9 @@ local function Refresh(entry, force)
     Show2D(entry)
     return
   end
-  entry.empty = not use3D -- (before Decorate, which draws the background)
+  -- (before Decorate, which draws the background) no model, or a dead unit's: the
+  -- grey-to-transparent background, which the see-through ghost shows through
+  entry.empty = not use3D or (DB.greyDead ~= false and IsDead(unit))
   GreyBar(entry, not online)
   for _, bolt in ipairs(BlizzBolts(entry)) do Hush(bolt, true) end
   Decorate(entry, true)
@@ -1630,7 +1650,7 @@ local function BuildWindow()
     "A soft pulse around the player and pet frames: gold while resting, red in combat (Custom frames only).", IsSquare)
   AddCheck("Grey when dead", 168, -296, function() return DB.greyDead ~= false end,
     function(on) DB.greyDead = on; RefreshAll(true) end,
-    "Dead, ghost and offline units are shown black and white and dimmed.")
+    "Dead units are shown as a see-through black-and-white ghost; offline players black and white.")
   AddCheck("Hide combat text", 28, -318, function() return DB.hideCombatText == true end,
     function(on) DB.hideCombatText = on; RefreshAll(true) end,
     "Hides the damage and healing numbers that pop up over the player and pet portraits.")
