@@ -1,6 +1,6 @@
 """Draws the custom frame's textures:
 
-  Textures/RoundedFrameBlend.tga  a rounded-square border shaded like Blizzard's
+  Textures/RoundedFrameBlend9.tga a rounded-square border shaded like Blizzard's
                                   portrait ring: two thin gold lines with a dark
                                   groove between them and a black inner edge. In game it
                                   takes the place of the ring, at the ring's own size,
@@ -10,6 +10,7 @@
                                   except a round hole that removes the ring.
   Textures/RingHoleCut.tga        the same with a straight side towards the bars
   (+ Mirror)                      (used in game), so the plate's edge line is kept.
+  Textures/RingHoleCutTight.tga   the same with a smaller round part (vehicle frames).
   Textures/FrameShadow.tga        a soft dark shadow drawn under the frame.
 
 The colours and band widths were measured from the game's unit frame picture
@@ -67,17 +68,23 @@ pl = px + (along(11) - 0.5) * 0.28      # the lines and groove wander a little
 # above and a little from the left: the outer line shines on the top and is in
 # shadow on the bottom, the inner line the other way round. Widths in Blizzard
 # pixels, from the outer edge inwards.
+# The game's inner line is wide (about as wide as the black lip inside it) with only
+# a thin groove between it and the outer line; it is what gives the ring its shape.
 OUTER = (0.0, 2.0)     # outer gold line
-INNER = (2.9, 3.8)     # inner gold line (the groove is between the two)
-DARK_END = 4.5         # dark bronze lip, then a black edge up to the hole
+INNER = (2.5, 3.85)    # inner gold line (the thin groove is between the two)
+DARK_END = 4.2         # dark bronze lip, then a black edge up to the hole
+# a thin dull-bronze ledge in that black edge, just before the hole, like the one on
+# the game's ring; it faces into the hole, so it is lit at the bottom right and lost
+# in shadow at the top left
+LEDGE = (4.3, 4.95)
 gy, gx = np.gradient(rrect_sdf(x, y, 1.0, R_OUT))
 m = np.maximum(np.hypot(gx, gy), 1e-9)
 nx, ny = gx / m, gy / m                # outward normal of the edge; y grows downward
-L = np.array((-0.35, -0.94)); L = L / np.linalg.norm(L)
-f = nx * L[0] + ny * L[1]              # 1 where the edge faces the light (top), -1 bottom
+L = np.array((-0.5, -0.87)); L = L / np.linalg.norm(L)   # from the upper left, like the game's ring
+f = nx * L[0] + ny * L[1]              # 1 where the edge faces the light (top left), -1 bottom right
 
 # colour ramp measured from the ring: shadow, body, lit, highlight
-STOPS = [(0.0, (45, 25, 5)), (0.35, (110, 75, 30)), (0.6, (172, 138, 94)),
+STOPS = [(0.0, (38, 17, 0)), (0.35, (114, 74, 24)), (0.6, (172, 138, 94)),
          (0.85, (224, 189, 137)), (1.0, (250, 226, 176))]
 def ramp(v):
     v = np.clip(v, 0, 1)
@@ -91,17 +98,39 @@ def across(lo, hi, d):                 # rounded profile across a line: 1 in its
     t = np.clip((d - lo) / (hi - lo), 0, 1)
     return np.sin(np.pi * t) ** 0.6
 
+# The two lines are bevels: the outer line's face slopes outwards (lit at the top
+# left), the inner line's slopes into the hole (lit at the bottom right). Each is
+# steepest at its outer side and flattens out towards the groove / hole, so it is
+# darker where it rolls away and brightest just before it drops into the groove,
+# where it also catches a narrow shine (as on the game's ring).
+def bevel(lo, hi, d, peak):            # 0.7 where the line rolls away, 1 at `peak`, 0.85 at the far side
+    t = np.clip((d - lo) / (hi - lo), 0, 1)
+    rise = 0.7 + 0.3 * np.sin(np.pi / 2 * np.clip(t / peak, 0, 1))
+    fall = 1 - 0.15 * np.clip((t - peak) / (1 - peak), 0, 1) ** 2
+    return rise * fall
+def shine(lo, hi, d, at, width):      # a narrow bright line across a line, at `at` of its width
+    t = np.clip((d - lo) / (hi - lo), 0, 1)
+    return np.exp(-((t - at) / width) ** 2)
+
 # brightness streaks along the lines: pixel-sized jumps plus slower drift
 streak = 1 + 0.18 * (along(1.8) - 0.5) + 0.20 * (along(10) - 0.5)
-outer = ramp((0.62 + 0.38 * f) * (0.72 + 0.28 * across(*OUTER, px)) * streak)
-inner = ramp((0.50 - 0.40 * f) * (0.75 + 0.25 * across(*INNER, pl)) * (1 + 0.3 * (along(2) - 0.5)))
+lit_o = np.clip(f, 0, 1) ** 1.5        # how squarely each line faces the light
+lit_i = np.clip(-f, 0, 1) ** 1.5
+outer = ramp((0.56 + 0.42 * f) * bevel(*OUTER, px, 0.75) * streak
+             + 0.22 * lit_o * shine(*OUTER, px, 0.68, 0.18) * (0.6 + 0.8 * along(6)))
+inner = ramp((0.56 - 0.38 * f) * bevel(*INNER, pl, 0.45) * (1 + 0.3 * (along(2) - 0.5))
+             + 0.18 * lit_i * shine(*INNER, pl, 0.4, 0.22) * (0.6 + 0.8 * along(7)))
 dirt = (0.65 + 0.7 * along(4))[..., None]          # the groove is dirtier in places
-groove = np.array((62, 38, 9), float) * dirt
+groove = np.array((48, 26, 5), float) * dirt
 lip = np.array((40, 25, 6), float) * (0.8 + 0.4 * along(3))[..., None]
 col = np.where((px < OUTER[1])[..., None], outer, groove)
 col = np.where(((pl >= INNER[0]) & (pl < INNER[1]))[..., None], inner, col)
 col = np.where((pl >= INNER[1])[..., None], lip, col)
 col = np.where((pl >= DARK_END)[..., None], np.array((16, 10, 4), float), col)
+ledge = np.clip(0.4 - 0.6 * f, 0.08, 1) * (0.75 + 0.25 * across(*LEDGE, px)) * (0.8 + 0.4 * along(3.5))
+ledge_col = np.array((16, 10, 4), float) + np.array((88, 64, 34), float) * ledge[..., None]
+on = np.clip(np.minimum(px - LEDGE[0], LEDGE[1] - px) / 0.12 + 0.5, 0, 1)[..., None]   # soft sides
+col = col * (1 - on) + ledge_col * on
 
 # pits and nicks (dark), and a few glints on the lit outer line, placed along the edge
 spots = np.zeros((n, n)); glint = np.zeros((n, n))
@@ -118,7 +147,7 @@ for _ in range(9):
     su, sd = rng.random() * PERIM, rng.uniform(0.5, 1.5)
     du = (u - su + PERIM / 2) % PERIM - PERIM / 2
     glint = np.maximum(glint, np.clip(1 - np.hypot(du / 1.4, px - sd) / 0.55, 0, 1))
-glint *= np.clip(f + 0.2, 0, 1)        # glints only where the light reaches
+glint *= np.clip(f + 0.1, 0, 1)        # glints only where the light reaches
 col = col * (1 - spots)[..., None]
 col = col * (1 - glint[..., None] * 0.55) + np.array((255, 240, 205), float) * glint[..., None] * 0.55
 
@@ -131,7 +160,10 @@ col = np.clip(col / 255, 0, 1)
 
 band = (d_out < 0) & (d_hole > 0)
 w = -d_hole * RING_R                   # depth inside the hole, in Blizzard pixels
-shadow = 0.6 * np.clip(1 - w / 2.5, 0, 1) ** 2
+# the rim casts its shadow onto the portrait away from the light: deeper and wider
+# under the top left, only a thin dark edge at the bottom right
+fl = np.clip(f, 0, 1)
+shadow = (0.5 + 0.2 * fl) * np.clip(1 - w / (1.8 + 1.8 * fl), 0, 1) ** 2
 alpha = np.where(band, 1.0, np.where(d_hole < 0, shadow, 0.0))
 col = np.where(band[..., None], col, 0.0)
 
@@ -146,7 +178,7 @@ def tga(path, img):
     hdr = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, w_, h, 32, 0x28)
     open(path, "wb").write(hdr + img[..., [2, 1, 0, 3]].tobytes())
 
-tga("Textures/RoundedFrameBlend.tga", frame_px)
+tga("Textures/RoundedFrameBlend9.tga", frame_px)
 
 # ---- RingHole.tga: opaque (kept) with a round see-through hole of HOLE_DISC of the
 # picture. Used with CLAMP, so everything outside the picture is kept as well.
@@ -174,6 +206,19 @@ flat_px = hole_px.copy()
 flat_px[..., 3] = (hk * 255 + 0.5).astype(np.uint8)
 tga("Textures/RingHoleCut.tga", flat_px)
 tga("Textures/RingHoleCutMirror.tga", np.ascontiguousarray(flat_px[:, ::-1]))
+
+# ---- RingHoleCutTight.tga (+ Mirror): the same with a smaller round part for its
+# straight side, for the vehicle frames. Their metal bar curls round the ring right at
+# its edge, and the usual hole (whose round part reaches well past the ring) cut the
+# end of it off; this one's round part stops just past the ring's edge (34.5 out for
+# the straight side at 32).
+FLAT_CUT_TIGHT = 0.779 # keep in sync with Portraits3D.lua
+keep = ((np.hypot(hx, hy) > HOLE_DISC) | (hx > FLAT_CUT_TIGHT)).astype(float)
+hk = keep.reshape(HS, SS, HS, SS).mean(axis=(1, 3))
+tight_px = hole_px.copy()
+tight_px[..., 3] = (hk * 255 + 0.5).astype(np.uint8)
+tga("Textures/RingHoleCutTight.tga", tight_px)
+tga("Textures/RingHoleCutTightMirror.tga", np.ascontiguousarray(tight_px[:, ::-1]))
 
 # ---- FrameShadow.tga: a soft dark shadow around the frame, like the game's frame parts
 # have (a dark fringe about 2 px wide, strongest under them). The frame fills

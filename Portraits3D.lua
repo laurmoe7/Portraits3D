@@ -1,33 +1,27 @@
 local addonName = ...
 
--- Replaces the flat portrait on Blizzard's unit frames with a 3D model.
---
--- Clipping: model frames cannot be masked to a circle, so the model lives in
--- a holder frame one strata BELOW the unit frame. The ring art of the unit
--- frame is drawn over it and hides the square's corners; the hole in the ring
--- is transparent, so the model shows through it. A black circle (a real mask
--- texture) sits behind the model to fill the sides that the square misses.
--- `scale` makes the square smaller than the portrait so its corners stay
--- inside the ring. Tune it with /p3d scale.
-
--- `square` is the "Custom frames" option: our own rounded-square frame in place of
--- Blizzard's round portrait ring (off: the model sits in Blizzard's ring).
-local DEFAULTS = { enabled = true, scale = 0.85, zoom = 1, petScale = 0.85, petZoom = 1,
-  targetScale = 0.85, targetZoom = 1, partyScale = 0.85, partyZoom = 1, anim = "full",
-  hideMinimap = true, square = true, background = "black",
+-- Replaces the flat portrait on Blizzard's unit frames with a 3D model in a frame
+-- of our own: a rounded square drawn where Blizzard's round portrait ring is (the
+-- ring is cut out of Blizzard's frame picture). Model frames cannot be masked to a
+-- shape, so the model sits in a square clipping frame inside the border's hole.
+local DEFAULTS = { enabled = true, zoom = 1, petZoom = 1,
+  targetZoom = 1, partyZoom = 1, anim = "full",
+  hideMinimap = true, background = "black",
   showBadge = true, showGlow = true, showZzz = true, hideCombatText = false, hideSwords = false, gradient = 1, gradientAlpha = 1,
   turn = 0, targetTurn = 0, partyTurn = 0, petTurn = 0, universal = false,
+  -- the model's size inside the frame
+  size = 1, targetSize = 1, partySize = 1, petSize = 1,
   offX = 0, offY = 0, targetOffX = 0, targetOffY = 0, partyOffX = 0, partyOffY = 0, petOffX = 0, petOffY = 0 }
 
 local GLOW_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RoundedGlow"
 local GLOW_RATIO = 0.80 -- how much of the glow picture the framed square fills
 local LEVEL_ATLAS = "ui-hud-unitframe-smallcircle" -- Blizzard's level circle
 
--- Custom frames: a rounded-square border (Textures\RoundedFrameBlend.tga, made by
+-- Custom frames: a rounded-square border (Textures\RoundedFrameBlend9.tga, made by
 -- tools\make_blend_frame.py) shaded like Blizzard's ring and drawn at the ring's own
 -- place and size, so the name plate and bars tuck under it the way they tuck under
 -- the ring. Only the round ring is removed from Blizzard's frame picture.
-local FRAME_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RoundedFrameBlend"
+local FRAME_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RoundedFrameBlend9"
 -- the hole that removes the ring has a straight side towards the bars, so the plate's
 -- edge line (right against the ring) and the joints of the bar lines are kept
 local RING_HOLE_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RingHoleCut"
@@ -39,6 +33,10 @@ local SHADOW_RATIO = 0.86
 local SHADOW_DROP = 1
 local HOLE_DISC = 0.84 -- the round hole's width in RingHoleCut, as a fraction of the picture
 local FLAT_CUT = 0.714 -- where its straight side is, as a fraction of the half width
+-- the same hole with a smaller round part, for rings with `tight` (vehicle frames: their
+-- metal bar curls round the ring right at its edge, and the usual hole cut its end off)
+local RING_HOLE_TIGHT_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RingHoleCutTight"
+local FLAT_CUT_TIGHT = 0.779
 local PLATE_KEEP = 1.2 -- the straight side stops this far inside the ring's radius (unless a ring sets `cut`)
 -- Space left between the square and the bars (the ring touches them), how much
 -- further away from the bars the square is moved, and how much smaller it is drawn
@@ -52,21 +50,33 @@ local FIT_SMALL = { gap = 2, shift = 1.5, shrink = 2, down = 1.5 }
 -- hole's straight side goes when that is not r - PLATE_KEEP; it stops about 1 px
 -- before the plate's edge line, which sits one ring radius out.
 -- A frame finds its ring by looking for the one inside the part of the picture it shows.
+-- `panel`: the plate's brown end panel, which lies under the ring in the picture and
+-- goes with it when the ring is cut out; our own is painted under the picture in its
+-- place (PLATE_FILL). From the ring's centre: `x` out to the middle of the plate's
+-- first line on the bars' side, and `top` / `bottom` the plate's top and bottom lines.
 local ATLAS_W, ATLAS_H = 1024, 512
+local PLATE_FILL = "Interface/AddOns/Portraits3D/Textures/PlateFill"
+local PANEL = { x = 31.75, top = -23.5, bottom = 21.5 }
+local PANEL_SMALL = { x = 20.75, top = -18, bottom = 14 }
 local RINGS = {
   -- player (3 bars, and 4 bars with a power bar): ring hole centred at 638 / 439, edge
   -- line 33.5 out; the centre is set 1.6 further right with the cut 1.6 shorter, as
   -- tested in game (the same straight side, and the square where it looks right)
-  { x = 639.6, y = 36.5, r = 34, cut = 31 }, { x = 440.6, y = 36.5, r = 34, cut = 31 },
-  { x = 40, y = 39.5, r = 34, cut = 32 },        -- player (vehicle), edge line 33 out
-  { x = 364, y = 41.5, r = 33, cut = 31.5 },     -- target (vehicle), edge line 32.5 out
-  { x = 358.5, y = 119.25, r = 33, cut = 32 },   -- the other target picture, edge line 33 out
+  { x = 639.6, y = 36.5, r = 34, cut = 31, panel = PANEL },
+  { x = 440.6, y = 36.5, r = 34, cut = 31, panel = { x = 31.75, top = -23.5, bottom = 31.5 } },
+  -- the vehicle frames (no plate panel, the strip by the ring stays see-through): a
+  -- metal bar curls round the ring right at its edge, which `tight` keeps (their
+  -- rings end 34.4 and 33.9 out, measured)
+  { x = 40, y = 39.5, r = 34, cut = 32, tight = true },        -- player (vehicle), edge line 33 out
+  { x = 364, y = 41.5, r = 33, cut = 31.5, tight = true },     -- target (vehicle), edge line 32.5 out
+  { x = 358.5, y = 119.25, r = 33, cut = 32,     -- the other target picture, edge line 33 out
+    panel = { x = 32.75, top = -24.5, bottom = 20.5 } },
   -- pet and target of target (centre 23, 398.5), party (23, 248.5): edge line 22 out.
   -- The pet was tested in game at 24, 398, with `down` (instead of FIT_SMALL's) to
   -- keep its square where it looks right; party uses the same fit. `bleed`: the next
   -- frame's ring in the picture, whose top edge peeks into this frame's part of it.
-  { x = 24, y = 398, r = 21.5, small = true, down = -1.5, bleed = { x = 23, y = 448, r = 21 } },
-  { x = 24, y = 248, r = 21.5, small = true, down = -1.5, bleed = { x = 23, y = 297.5, r = 21 } },
+  { x = 24, y = 398, r = 21.5, small = true, down = -1.5, bleed = { x = 23, y = 448, r = 21 }, panel = PANEL_SMALL },
+  { x = 24, y = 248, r = 21.5, small = true, down = -1.5, bleed = { x = 23, y = 297.5, r = 21 }, panel = PANEL_SMALL },
 }
 local RING_ROUND_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RingHole" -- round hole (HOLE_DISC wide)
 -- Rings known by the name of the frame picture instead (looked up first): the ring's
@@ -76,7 +86,8 @@ local NAMED_RINGS = {
   -- target and focus: the player's ring mirrored, scaled from its 60 wide portrait; in
   -- the picture its ring is centred at 553.5, 119.25 with the edge line 33 out, which
   -- this matches (`shift` a little more than the player's: its gap measured 1 px narrower)
-  ["UI-HUD-UnitFrame-Target-PortraitOn"] = { pw = 58, dx = -1.1, dy = -1.5, r = 33, cut = 30, shift = 2.1 },
+  ["UI-HUD-UnitFrame-Target-PortraitOn"] = { pw = 58, dx = -1.1, dy = -1.5, r = 33, cut = 30, shift = 2.1,
+    panel = { x = 32.75, top = -24.5, bottom = 20.5 } },
 }
 
 -- Frames that can be switched on or off in the options (party 1-4 share one).
@@ -90,7 +101,6 @@ local GROUPS = {
 }
 local DB
 
-local STRATA = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG", "FULLSCREEN", "FULLSCREEN_DIALOG", "TOOLTIP" }
 
 -- Each entry: the unit, and candidate paths to the portrait texture (first one
 -- that is a texture wins). Paths are looked up from _G at call time because
@@ -98,8 +108,6 @@ local STRATA = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG", "FULLSCREEN", 
 local ENTRIES = {
   { unit = "player", paths = { "PlayerFrame.PlayerFrameContainer.PlayerPortrait", "PlayerPortrait" },
     ringTex = { "PlayerFrame.PlayerFrameContainer.FrameTexture" },
-    nameObj = { "PlayerName", "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.Name" },
-    manaObj = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.ManaBarArea.ManaBar" },
     level = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.LevelText",
               "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.LevelBackgroundCircle", "PlayerLevelText" }, side = "left",
     ring = { "PlayerFrame.PlayerFrameContainer" }, content = { "PlayerFrame.PlayerFrameContent" },
@@ -119,8 +127,6 @@ local ENTRIES = {
              "PlayerStatusTexture", "PlayerStatusGlow" } },
   { unit = "target", paths = { "TargetFrame.TargetFrameContainer.Portrait", "TargetFramePortrait" },
     ringTex = { "TargetFrame.TargetFrameContainer.FrameTexture" },
-    nameObj = { "TargetFrame.TargetFrameContent.TargetFrameContentMain.Name" },
-    manaObj = { "TargetFrame.TargetFrameContent.TargetFrameContentMain.ManaBar" },
     -- the health bar, greyed for an offline player (Blizzard only does that on party frames)
     hpBar = { "TargetFrame.healthbar", "TargetFrame.TargetFrameContent.TargetFrameContentMain.HealthBarsContainer.HealthBar",
               "TargetFrame.TargetFrameContent.TargetFrameContentMain.HealthBar" },
@@ -131,8 +137,6 @@ local ENTRIES = {
     rest = { "TargetFrame.TargetFrameContainer.Flash", "TargetFrame.TargetFrameContainer.BossPortraitFrameTexture" } },
   { unit = "focus", paths = { "FocusFrame.TargetFrameContainer.Portrait", "FocusFramePortrait" },
     ringTex = { "FocusFrame.TargetFrameContainer.FrameTexture" },
-    nameObj = { "FocusFrame.TargetFrameContent.TargetFrameContentMain.Name" },
-    manaObj = { "FocusFrame.TargetFrameContent.TargetFrameContentMain.ManaBar" },
     hpBar = { "FocusFrame.healthbar", "FocusFrame.TargetFrameContent.TargetFrameContentMain.HealthBarsContainer.HealthBar",
               "FocusFrame.TargetFrameContent.TargetFrameContentMain.HealthBar" },
     level = { "FocusFrame.TargetFrameContent.TargetFrameContentMain.LevelText",
@@ -144,12 +148,9 @@ local ENTRIES = {
     dumpRoot = { "PetFrame" }, bgRoot = "PetFrame",
     -- the combat flash around the pet frame (round / plate shaped)
     rest = { "PetFrame.threatIndicator", "PetFrameFlash", "PetFrame.Flash", "PetAttackModeTexture", "PetFrame.PetAttackModeTexture" },
-    ringTex = { "PetFrameTexture", "PetFrame.FrameTexture" },
-    nameObj = { "PetName", "PetFrame.name" }, manaObj = { "PetFrameManaBar", "PetFrame.manabar" } },
+    ringTex = { "PetFrameTexture", "PetFrame.FrameTexture" } },
   { unit = "targettarget", paths = { "TargetFrameToT.Portrait", "TargetFrame.totFrame.Portrait", "TargetFrameToTPortrait" },
     root = "TargetFrame.totFrame", ring = { "TargetFrame.totFrame" },
-    nameObj = { "TargetFrame.totFrame.name", "TargetFrame.totFrame.Name" },
-    manaObj = { "TargetFrame.totFrame.manabar", "TargetFrame.totFrame.ManaBar" },
     hpBar = { "TargetFrame.totFrame.healthbar", "TargetFrame.totFrame.HealthBar" } },
   { unit = "party1", paths = { "PartyFrame.MemberFrame1.Portrait", "PartyMemberFrame1.portrait", "PartyMemberFrame1Portrait" },
     root = "PartyFrame.MemberFrame1", ring = { "PartyFrame.MemberFrame1" },
@@ -157,32 +158,28 @@ local ENTRIES = {
     content = { "PartyFrame.MemberFrame1.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame1.Texture" },
     -- combat / status glows (round shaped)
-    rest = { "PartyFrame.MemberFrame1.threatIndicator", "PartyFrame.MemberFrame1.PartyMemberOverlay.Status" },
-    nameObj = { "PartyFrame.MemberFrame1.Name" }, manaObj = { "PartyFrame.MemberFrame1.ManaBar" } },
+    rest = { "PartyFrame.MemberFrame1.threatIndicator", "PartyFrame.MemberFrame1.PartyMemberOverlay.Status" } },
   { unit = "party2", paths = { "PartyFrame.MemberFrame2.Portrait", "PartyMemberFrame2.portrait", "PartyMemberFrame2Portrait" },
     root = "PartyFrame.MemberFrame2", ring = { "PartyFrame.MemberFrame2" },
     -- leader, PvP and disconnect icons: lifted above the custom frame like the bars
     content = { "PartyFrame.MemberFrame2.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame2.Texture" },
     -- combat / status glows (round shaped)
-    rest = { "PartyFrame.MemberFrame2.threatIndicator", "PartyFrame.MemberFrame2.PartyMemberOverlay.Status" },
-    nameObj = { "PartyFrame.MemberFrame2.Name" }, manaObj = { "PartyFrame.MemberFrame2.ManaBar" } },
+    rest = { "PartyFrame.MemberFrame2.threatIndicator", "PartyFrame.MemberFrame2.PartyMemberOverlay.Status" } },
   { unit = "party3", paths = { "PartyFrame.MemberFrame3.Portrait", "PartyMemberFrame3.portrait", "PartyMemberFrame3Portrait" },
     root = "PartyFrame.MemberFrame3", ring = { "PartyFrame.MemberFrame3" },
     -- leader, PvP and disconnect icons: lifted above the custom frame like the bars
     content = { "PartyFrame.MemberFrame3.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame3.Texture" },
     -- combat / status glows (round shaped)
-    rest = { "PartyFrame.MemberFrame3.threatIndicator", "PartyFrame.MemberFrame3.PartyMemberOverlay.Status" },
-    nameObj = { "PartyFrame.MemberFrame3.Name" }, manaObj = { "PartyFrame.MemberFrame3.ManaBar" } },
+    rest = { "PartyFrame.MemberFrame3.threatIndicator", "PartyFrame.MemberFrame3.PartyMemberOverlay.Status" } },
   { unit = "party4", paths = { "PartyFrame.MemberFrame4.Portrait", "PartyMemberFrame4.portrait", "PartyMemberFrame4Portrait" },
     root = "PartyFrame.MemberFrame4", ring = { "PartyFrame.MemberFrame4" },
     -- leader, PvP and disconnect icons: lifted above the custom frame like the bars
     content = { "PartyFrame.MemberFrame4.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame4.Texture" },
     -- combat / status glows (round shaped)
-    rest = { "PartyFrame.MemberFrame4.threatIndicator", "PartyFrame.MemberFrame4.PartyMemberOverlay.Status" },
-    nameObj = { "PartyFrame.MemberFrame4.Name" }, manaObj = { "PartyFrame.MemberFrame4.ManaBar" } },
+    rest = { "PartyFrame.MemberFrame4.threatIndicator", "PartyFrame.MemberFrame4.PartyMemberOverlay.Status" } },
 }
 
 local function Resolve(path)
@@ -303,7 +300,7 @@ end
 local function AnchorBackground(entry)
   local bg = entry.bg
   if not bg or not entry.holder then return end
-  local target = DB.square and entry.clip or entry.holder
+  local target = entry.clip
   local mode = DB.background or "black"
   local extent = (mode == "gradient" or mode == "class") and (DB.gradient or 1) or 1
   if entry.empty then extent = 1 end
@@ -341,7 +338,7 @@ local function ApplyBackground(entry)
   end
   -- This runs every second; only redraw when the look has changed (a change of
   -- size goes through Layout, which anchors the background again itself).
-  local key = table.concat({ mode, r, g, b, DB.gradient or 1, DB.gradientAlpha or 1, tostring(DB.square),
+  local key = table.concat({ mode, r, g, b, DB.gradient or 1, DB.gradientAlpha or 1,
     tostring(entry.empty) }, ":")
   if entry.bgKey == key then return end
   entry.bgKey = key
@@ -387,16 +384,15 @@ local function CheckLoaded(ok, file)
 end
 
 local function Decorate(entry, active)
-  local square = DB.square and active
   for _, path in ipairs(entry.level or {}) do
     local obj = Resolve(path)
-    if type(obj) == "table" and obj.SetAlpha then Hush(obj, square) end
+    if type(obj) == "table" and obj.SetAlpha then Hush(obj, active) end
   end
   -- Glows are also masked away: the game pulses some of them with an animation,
   -- which changes their alpha without going through SetAlpha.
   local function HideGlow(obj)
-    Hush(obj, square)
-    if entry.holder and obj.GetObjectType and obj:GetObjectType() == "Texture" then Cover2D(entry, obj, square) end
+    Hush(obj, active)
+    if entry.holder and obj.GetObjectType and obj:GetObjectType() == "Texture" then Cover2D(entry, obj, active) end
   end
   for _, path in ipairs(entry.rest or {}) do
     local obj = Resolve(path)
@@ -444,7 +440,7 @@ local function Decorate(entry, active)
       if root then pcall(ScanLevel, root, entry.levelFound, seen, 0, entry.holder) end
     end
   end
-  for _, obj in ipairs(entry.levelFound or {}) do Hush(obj, square) end
+  for _, obj in ipairs(entry.levelFound or {}) do Hush(obj, active) end
   local scanRoot = (entry.unit == "player" and PlayerFrame) or (entry.unit == "pet" and PetFrame) or nil
   if scanRoot then
     if not entry.scanned and entry.holder then
@@ -458,7 +454,7 @@ local function Decorate(entry, active)
   if entry.glowTex then
     local combat = UnitAffectingCombat and UnitAffectingCombat(entry.unit)
     local resting = entry.unit == "player" and IsResting and IsResting()
-    if square and DB.showGlow ~= false and (combat or resting) then
+    if active and DB.showGlow ~= false and (combat or resting) then
       if combat then entry.glowTex:SetVertexColor(1, 0.25, 0.2) else entry.glowTex:SetVertexColor(1, 0.82, 0.2) end
       entry.glowTex:Show()
       if not entry.border:GetScript("OnUpdate") then -- Decorate runs every second
@@ -472,8 +468,8 @@ local function Decorate(entry, active)
     end
   end
   if entry.badge then
-    entry.badge:SetShown(square and DB.showBadge ~= false)
-    if square then
+    entry.badge:SetShown(active and DB.showBadge ~= false)
+    if active then
       local n = UnitLevel(entry.unit)
       entry.badgeText:SetText((n and n > 0) and n or "??")
       -- like Blizzard: white on the player frame, the difficulty colour on units you
@@ -519,14 +515,6 @@ function ScanLevel(root, found, seen, depth, skip)
   end
 end
 
-local function StrataBelow(frame)
-  local current = frame:GetFrameStrata()
-  for i, name in ipairs(STRATA) do
-    if name == current then return STRATA[math.max(1, i - 1)] end
-  end
-  return "LOW"
-end
-
 -- Four sets of size and zoom settings: player (no prefix), target (also target
 -- of target and focus), party and pet.
 local OPT_PREFIX = { pet = "pet", target = "target", targettarget = "target", focus = "target" }
@@ -552,9 +540,10 @@ end
 -- Blizzard's round ring is cut out of its frame picture only while our custom frame
 -- is drawn in its place; whenever the frame is Blizzard's own again, the ring is back.
 local function ApplyRingCut(entry)
-  local on = DB.square and entry.holder and entry.holder:IsShown() and true or false
+  local on = entry.holder and entry.holder:IsShown() and true or false
   SetRingMask(entry, entry.hole, "holeOn", on)
   SetRingMask(entry, entry.hole2, "hole2On", on and entry.wantHole2)
+  if entry.plateFill then entry.plateFill:SetShown(on and entry.wantFill or false) end
 end
 
 -- Where Blizzard's ring is, from the part of the unit frame picture the frame shows:
@@ -598,66 +587,87 @@ local function Layout(entry)
   if not holder then return end
   local w, h = holder:GetWidth(), holder:GetHeight()
   if not w or w <= 0 then return end
-  if DB.square then
-    -- In the ring's place and about its size; the model fills the border's hole.
-    local dx, dy, radius, cut, ring, bleed = RingGeometry(entry)
-    if not radius or radius < w * 0.35 or radius > w * 0.8 then dx, dy, radius, cut, ring, bleed = 0, 0, w * 0.56, w * 0.56 - PLATE_KEEP, nil, nil end
-    local fit = ring and ring.small and FIT_SMALL or FIT
-    -- Its outer side starts on the ring's edge; the side by the bars is pulled back
-    -- by the gap, then the whole square is moved away from the bars by the shift,
-    -- and the shrink takes the rest off the side away from the bars.
-    local away = entry.side == "right" and 1 or -1
-    local shift = ring and ring.shift or fit.shift
-    local cx, cy = dx + away * (fit.gap / 2 + shift - fit.shrink / 2), dy - (ring and ring.down or fit.down)
-    local size = 2 * (radius + 0.5) - fit.gap - fit.shrink
-    if entry.hole then
-      -- Sized so the straight side lands just before the plate's edge line; the
-      -- round part then reaches a little past the ring's soft edge.
-      local d = 2 * cut / FLAT_CUT
-      entry.hole:SetSize(d, d)
-      entry.hole:ClearAllPoints()
-      entry.hole:SetPoint("CENTER", entry.portrait, "CENTER", dx, dy)
+  -- In the ring's place and about its size; the model fills the border's hole.
+  local dx, dy, radius, cut, ring, bleed = RingGeometry(entry)
+  if not radius or radius < w * 0.35 or radius > w * 0.8 then dx, dy, radius, cut, ring, bleed = 0, 0, w * 0.56, w * 0.56 - PLATE_KEEP, nil, nil end
+  local fit = ring and ring.small and FIT_SMALL or FIT
+  -- Its outer side starts on the ring's edge; the side by the bars is pulled back
+  -- by the gap, then the whole square is moved away from the bars by the shift,
+  -- and the shrink takes the rest off the side away from the bars.
+  local away = entry.side == "right" and 1 or -1
+  local shift = ring and ring.shift or fit.shift
+  local cx, cy = dx + away * (fit.gap / 2 + shift - fit.shrink / 2), dy - (ring and ring.down or fit.down)
+  local size = 2 * (radius + 0.5) - fit.gap - fit.shrink
+  if entry.hole then
+    -- Sized so the straight side lands just before the plate's edge line; the
+    -- round part then reaches a little past the ring's soft edge.
+    local tight = ring and ring.tight
+    local file = (tight and RING_HOLE_TIGHT_TEXTURE or RING_HOLE_TEXTURE) .. (entry.side == "right" and "Mirror" or "")
+    if entry.holeFile ~= file then
+      entry.holeFile = file
+      CheckLoaded(entry.hole:SetTexture(file, "CLAMP", "CLAMP"), file)
     end
-    if entry.hole2 then
-      -- a second round hole over the next frame's ring, which peeks in at the bottom
-      if bleed then
-        local d = 2 * (bleed.r + 3.5) / HOLE_DISC -- its soft dark edge reaches further
-        entry.hole2:SetSize(d, d)
-        entry.hole2:ClearAllPoints()
-        entry.hole2:SetPoint("CENTER", entry.portrait, "CENTER", bleed.dx, bleed.dy)
-      end
-      entry.wantHole2 = bleed and true or false
-      ApplyRingCut(entry)
+    local d = 2 * cut / (tight and FLAT_CUT_TIGHT or FLAT_CUT)
+    entry.hole:SetSize(d, d)
+    entry.hole:ClearAllPoints()
+    entry.hole:SetPoint("CENTER", entry.portrait, "CENTER", dx, dy)
+  end
+  if entry.hole2 then
+    -- a second round hole over the next frame's ring, which peeks in at the bottom
+    if bleed then
+      local d = 2 * (bleed.r + 3.5) / HOLE_DISC -- its soft dark edge reaches further
+      entry.hole2:SetSize(d, d)
+      entry.hole2:ClearAllPoints()
+      entry.hole2:SetPoint("CENTER", entry.portrait, "CENTER", bleed.dx, bleed.dy)
     end
-    entry.border:SetSize(size, size)
-    entry.border:ClearAllPoints()
-    entry.border:SetPoint("CENTER", entry.portrait, "CENTER", cx, cy)
-    clip:ClearAllPoints()
-    clip:SetPoint("CENTER", entry.border, "CENTER")
-    if entry.glowTex then entry.glowTex:SetSize(size / GLOW_RATIO, size / GLOW_RATIO) end
-    if entry.shadow then
-      entry.shadow:SetSize(size / SHADOW_RATIO, size / SHADOW_RATIO)
-      entry.shadow:ClearAllPoints()
-      entry.shadow:SetPoint("CENTER", entry.border, "CENTER", 0, -SHADOW_DROP * radius / (ring and ring.r or radius))
+    entry.wantHole2 = bleed and true or false
+    ApplyRingCut(entry)
+  end
+  if entry.plateFill then
+    -- the plate's end panel, from the middle of our border's band (hidden under it)
+    -- out to the plate's first line, between its top and bottom lines
+    local panel = ring and ring.panel
+    if panel then
+      local scale, bars = radius / ring.r, -away
+      local inner = cx + bars * (size / 2 - size * (1 - HOLE) / 4)
+      local outer = dx + bars * panel.x * scale
+      entry.plateFill:ClearAllPoints()
+      entry.plateFill:SetPoint("TOPLEFT", entry.portrait, "CENTER", math.min(inner, outer), dy - panel.top * scale)
+      entry.plateFill:SetPoint("BOTTOMRIGHT", entry.portrait, "CENTER", math.max(inner, outer), dy - panel.bottom * scale)
     end
-    clip:SetSize(size * HOLE, size * HOLE)
-    -- about as big in the frame as Blizzard's bolt is on the party frames
-    if entry.dcIcon then entry.dcIcon:SetSize(size * 0.7, size * 0.7) end
-    if entry.badge then
-      local b = math.max(22, size * 0.42)
-      local inset = size * 0.08
-      entry.badge:SetSize(b, b)
-      entry.badge:ClearAllPoints()
-      if entry.side == "left" then
-        entry.badge:SetPoint("CENTER", entry.border, "BOTTOMLEFT", inset, inset)
-      else
-        entry.badge:SetPoint("CENTER", entry.border, "BOTTOMRIGHT", -inset, inset)
-      end
+    entry.wantFill = panel and true or false
+    ApplyRingCut(entry)
+  end
+  entry.border:SetSize(size, size)
+  entry.border:ClearAllPoints()
+  entry.border:SetPoint("CENTER", entry.portrait, "CENTER", cx, cy)
+  clip:ClearAllPoints()
+  clip:SetPoint("CENTER", entry.border, "CENTER")
+  if entry.glowTex then entry.glowTex:SetSize(size / GLOW_RATIO, size / GLOW_RATIO) end
+  if entry.shadow then
+    entry.shadow:SetSize(size / SHADOW_RATIO, size / SHADOW_RATIO)
+    entry.shadow:ClearAllPoints()
+    entry.shadow:SetPoint("CENTER", entry.border, "CENTER", 0, -SHADOW_DROP * radius / (ring and ring.r or radius))
+  end
+  clip:SetSize(size * HOLE, size * HOLE)
+  -- the model's own size inside the square (Model size); the square stays as it is,
+  -- and a bigger model is trimmed at its edges
+  local s = size * HOLE * (Opt(entry, "size") or 1)
+  entry.model:ClearAllPoints()
+  entry.model:SetPoint("CENTER", clip, "CENTER")
+  entry.model:SetSize(s, s)
+  -- about as big in the frame as Blizzard's bolt is on the party frames
+  if entry.dcIcon then entry.dcIcon:SetSize(size * 0.7, size * 0.7) end
+  if entry.badge then
+    local b = math.max(22, size * 0.42)
+    local inset = size * 0.08
+    entry.badge:SetSize(b, b)
+    entry.badge:ClearAllPoints()
+    if entry.side == "left" then
+      entry.badge:SetPoint("CENTER", entry.border, "BOTTOMLEFT", inset, inset)
+    else
+      entry.badge:SetPoint("CENTER", entry.border, "BOTTOMRIGHT", -inset, inset)
     end
-  else
-    clip:ClearAllPoints()
-    clip:SetPoint("CENTER", holder, "CENTER")
-    clip:SetSize(w * Opt(entry, "scale"), h * Opt(entry, "scale"))
   end
   AnchorBackground(entry)
 end
@@ -666,7 +676,7 @@ end
 -- border so a border that reaches over them cannot hide them. Not allowed in
 -- combat, so it is tried again after (a /reload in combat would miss it).
 local function LiftContent(entry)
-  if not (DB.square and entry.holder) then return end
+  if not entry.holder then return end
   local content = FindObject(entry.content)
   local level = entry.holder:GetFrameLevel() + 6
   if content and content.SetFrameLevel and content:GetFrameLevel() < level
@@ -675,22 +685,16 @@ local function LiftContent(entry)
   end
 end
 
--- Switches one frame between the round look and the custom frame.
+-- Layers one frame: the model sits ABOVE the unit frame's ring art (where the ring
+-- was cut out) and our border is drawn over the model.
 local function ApplyStyle(entry)
   if not entry.holder then return end
-  -- Round look: the model sits BELOW the unit frame and its ring hides the
-  -- corners. Custom frame: the model sits ABOVE the unit frame's ring art (so
-  -- it covers the round ring) and the new border is drawn over the model.
   local parent = FindObject(entry.ring) or entry.holder:GetParent()
   local holder = entry.holder
-  if DB.square then
-    -- Above the frame that holds the ring art (the portrait's own parent is not
-    -- always that frame, e.g. on the target).
-    holder:SetFrameStrata(parent:GetFrameStrata())
-    holder:SetFrameLevel(parent:GetFrameLevel() + 1)
-  else
-    holder:SetFrameStrata(StrataBelow(parent))
-  end
+  -- Above the frame that holds the ring art (the portrait's own parent is not
+  -- always that frame, e.g. on the target).
+  holder:SetFrameStrata(parent:GetFrameStrata())
+  holder:SetFrameLevel(parent:GetFrameLevel() + 1)
   local base = holder:GetFrameLevel()
   LiftContent(entry)
   entry.clip:SetFrameLevel(base + 1)
@@ -698,12 +702,7 @@ local function ApplyStyle(entry)
   if entry.boltFrame then entry.boltFrame:SetFrameLevel(base + 3) end -- above the model (base + 2)
   if entry.badge then entry.badge:SetFrameLevel(base + 5) end -- above the dragon, below the content frame (PvP icon)
   AnchorBackground(entry)
-  -- the round mask on the background, only in the round look (added once at a time)
-  if DB.square == entry.bgMasked then
-    if DB.square then entry.bg:RemoveMaskTexture(entry.mask) else entry.bg:AddMaskTexture(entry.mask) end
-    entry.bgMasked = not DB.square
-  end
-  entry.border:SetShown(DB.square and entry.holder:IsShown())
+  entry.border:SetShown(entry.holder:IsShown())
   -- Custom frame: remove the round ring from Blizzard's frame picture.
   ApplyRingCut(entry)
   Decorate(entry, entry.holder:IsShown())
@@ -738,18 +737,12 @@ local function Setup(entry)
   local parent = portrait:GetParent()
   if not parent then return false end
 
-  local holder = CreateFrame("Frame", nil, parent)
-  holder:SetFrameStrata(StrataBelow(parent))
-  holder:SetFrameLevel(1)
+  local holder = CreateFrame("Frame", nil, parent) -- layered by ApplyStyle
   holder:SetAllPoints(portrait)
 
   local bg = holder:CreateTexture(nil, "BACKGROUND")
   bg:SetAllPoints(holder)
   bg:SetColorTexture(0, 0, 0, 1)
-  local mask = holder:CreateMaskTexture()
-  mask:SetAllPoints(holder)
-  mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-  bg:AddMaskTexture(mask)
 
   -- The model sits in a clipping frame so nothing can draw outside its square.
   local clip = CreateFrame("Frame", nil, holder)
@@ -857,17 +850,29 @@ local function Setup(entry)
       local hole = owner:CreateMaskTexture()
       local holeFile = RING_HOLE_TEXTURE .. (entry.side == "right" and "Mirror" or "")
       CheckLoaded(hole:SetTexture(holeFile, "CLAMP", "CLAMP"), holeFile)
+      entry.holeFile = holeFile
       hole:SetPoint("CENTER", portrait, "CENTER")
       local hole2 = owner:CreateMaskTexture()
       CheckLoaded(hole2:SetTexture(RING_ROUND_TEXTURE, "CLAMP", "CLAMP"), RING_ROUND_TEXTURE)
       hole2:SetPoint("CENTER", portrait, "CENTER")
       entry.hole, entry.hole2, entry.ringTexObj = hole, hole2, ringTex
+      -- the plate's end panel, painted just under the frame picture so it only shows
+      -- where the ring was cut out (placed by Layout)
+      local layer, sub = ringTex:GetDrawLayer()
+      layer, sub = layer or "ARTWORK", (sub or 0) - 1
+      if sub < -8 then -- already the lowest sublevel: the layer below instead
+        local below = { BORDER = "BACKGROUND", ARTWORK = "BORDER", OVERLAY = "ARTWORK" }
+        layer, sub = below[layer] or layer, below[layer] and 7 or -8
+      end
+      local fill = owner:CreateTexture(nil, layer, nil, sub)
+      CheckLoaded(fill:SetTexture(PLATE_FILL), PLATE_FILL)
+      fill:Hide()
+      entry.plateFill = fill
     end
   end
 
   entry.portrait, entry.path, entry.holder, entry.clip, entry.model = portrait, path, holder, clip, model
-  entry.bg, entry.mask, entry.border, entry.frameTex = bg, mask, border, frameTex
-  entry.bgMasked = true
+  entry.bg, entry.border, entry.frameTex = bg, border, frameTex
   holder:SetScript("OnSizeChanged", function() Layout(entry) end)
   holder:Hide()
   ApplyStyle(entry)
@@ -921,7 +926,9 @@ local function FlatPieces(entry)
     for _, region in ipairs({ bgRoot:GetRegions() }) do
       local atlas = region.GetAtlas and region:GetAtlas()
       local file = region.GetTexture and region:GetTexture()
-      if region.SetAlpha and not atlas and type(file) == "number" and file <= 0 then
+      -- (not our plate panel: a picture without an atlas on the same frame, which this
+      -- took for the backdrop and hid on the pet and target of target)
+      if region.SetAlpha and not atlas and type(file) == "number" and file <= 0 and region ~= entry.plateFill then
         local known = false
         for _, have in ipairs(list) do if have == region then known = true end end
         if not known then list[#list + 1] = region end
@@ -1037,16 +1044,6 @@ local function Refresh(entry, force)
   local unit = entry.unit
   if testParty and unit:match("^party") then unit = "player" end
   local wanted = DB.enabled and DB.frames[GroupOf(entry)] ~= false
-  -- A disconnected unit has no 3D model; its flat portrait is shown grey instead,
-  -- and given its colour back once the unit is online again (or the option is off).
-  local offline = wanted and UnitExists(unit) and not UnitIsConnected(unit)
-  if offline and not entry.flatGreyed then
-    entry.flatGreyed = true
-    pcall(entry.portrait.SetDesaturated, entry.portrait, true)
-  elseif not offline and entry.flatGreyed then
-    entry.flatGreyed = nil
-    pcall(entry.portrait.SetDesaturated, entry.portrait, false)
-  end
   local exists = UnitExists(unit)
   -- A model can only be loaded while the unit is in sight; once loaded it stays
   -- when the unit walks out of range or logs off (shown black and white then, with
@@ -1057,9 +1054,8 @@ local function Refresh(entry, force)
   local cached = guid ~= nil and entry.modelGUID == guid
   local online = exists and UnitIsConnected(unit) and true or false
   local use3D = visible or cached
-  -- With no model to show, the custom frame stays (grey); in the round look
-  -- Blizzard's own portrait is shown.
-  if not wanted or not exists or not (use3D or DB.square) then
+  -- (with no model to show, the frame stays, grey)
+  if not wanted or not exists then
     Show2D(entry)
     return
   end
@@ -1079,7 +1075,7 @@ local function Refresh(entry, force)
     entry.model:Hide()
     if entry.dcIcon then entry.dcIcon:SetShown(not online) end
     entry.holder:Show()
-    entry.border:SetShown(DB.square)
+    entry.border:Show()
     ApplyRingCut(entry)
     Layout(entry)
     for _, piece in ipairs(FlatPieces(entry)) do Hush(piece, true); Cover2D(entry, piece, true) end
@@ -1093,7 +1089,7 @@ local function Refresh(entry, force)
   entry.state = state
   entry.model:Show()
   entry.holder:Show()
-  entry.border:SetShown(DB.square)
+  entry.border:Show()
   ApplyRingCut(entry)
   Layout(entry)
   if not visible then
@@ -1124,12 +1120,14 @@ end
 -- ===== Elite / rare / boss border =====
 -- With the custom frame Blizzard's border sits behind our frame, so a copy is drawn
 -- above it (below the bars and indicators, which stay on top) and Blizzard's own is
--- kept invisible. Offsets are fractions of the border's own width / height; one set
--- for elite and rare borders (the game's own place fits) and one for the winged boss
--- border (lined up by hand). The Elite border mover saves the player's own numbers.
+-- kept invisible. The copy is centred on the custom square, at the picture's own
+-- size, moved by offsets that are fractions of its width / height: one set for
+-- elite and rare borders and one for the winged boss border. (Not from where the
+-- game anchors its own border: that differs per kind, so the mover's preview did
+-- not match real bosses.) The Elite border mover saves the player's own numbers.
 local DECO_DEFAULT = {
-  normal = { x = 0, y = 0, size = 1 },
-  boss = { x = 0.10, y = -0.06, size = 1 },
+  normal = { x = 0, y = 0, size = 1 },    -- lined up in game: fits as it is
+  boss = { x = 0.05, y = 0, size = 1 },   -- lined up in game with the mover
 }
 local function DecoKind(atlas)
   return (atlas and tostring(atlas):find("Winged")) and "boss" or "normal"
@@ -1175,19 +1173,16 @@ local function UpdateDeco()
   end
   local ov = entry.decoOverlay
   local atlas = deco.GetAtlas and deco:GetAtlas()
-  local live = DB.square and DB.enabled and entry.border and entry.holder:IsShown()
+  local live = DB.enabled and entry.border and entry.holder:IsShown()
     and atlas and deco:IsShown()
   if not live then
     if ov then ov:Hide() end
     return
   end
-  -- Measure the game's border at the picture's own size; the game can resize it.
-  pcall(deco.SetAtlas, deco, atlas, true)
-  local dw, dh = deco:GetSize()
-  local dx, dy = 0, 0
-  local dcx, dcy = deco:GetCenter()
-  local pcx, pcy = entry.portrait:GetCenter()
-  if dcx and pcx then dx, dy = dcx - pcx, dcy - pcy end
+  -- the picture's own size (the game shows it at that size too)
+  local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)
+  local dw, dh = info and info.width, info and info.height
+  if not (dw and dh and dw > 0) then dw, dh = deco:GetSize() end
   local style = testing and { x = TEST.decoX, y = TEST.decoY, size = TEST.decoSize }
     or (DB.decoStyle and DB.decoStyle[DecoKind(atlas)]) or DECO_DEFAULT[DecoKind(atlas)]
   if not ov then
@@ -1201,7 +1196,7 @@ local function UpdateDeco()
   pcall(ov.tex.SetAtlas, ov.tex, atlas)
   ov.tex:SetSize(dw * style.size, dh * style.size)
   ov.tex:ClearAllPoints()
-  ov.tex:SetPoint("CENTER", entry.portrait, "CENTER", dx + style.x * dw, dy + style.y * dh)
+  ov.tex:SetPoint("CENTER", entry.border, "CENTER", style.x * dw, style.y * dh)
   ov:Show()
   Hush(deco, true)
 end
@@ -1222,6 +1217,39 @@ local function SetupDecoEvents()
   end)
 end
 
+-- 3D models do not redraw when the scale of a frame above them changes (Edit Mode's
+-- frame size): the model stayed at its old place and size until a /reload. Each
+-- portrait's scale is watched; once it has settled, the frame is laid out again and
+-- its model reloaded.
+local function WatchScale()
+  local watcher, wait = CreateFrame("Frame"), 0
+  watcher:SetScript("OnUpdate", function(_, elapsed)
+    wait = wait + elapsed
+    if wait < 0.1 then return end
+    wait = 0
+    local now = GetTime()
+    for _, entry in ipairs(ENTRIES) do
+      local holder = entry.holder
+      if holder then
+        local scale = holder:GetEffectiveScale()
+        if entry.scaleSeen and math.abs(scale - entry.scaleSeen) > 1e-4 then
+          entry.scaleChanged = now -- still changing (a slider being dragged)
+        end
+        entry.scaleSeen = scale
+        if entry.scaleChanged and now - entry.scaleChanged > 0.3 then
+          entry.scaleChanged = nil
+          if holder:IsShown() then
+            entry.model:ClearAllPoints()
+            entry.model:SetAllPoints(entry.clip)
+            Layout(entry)
+            Refresh(entry, true)
+          end
+        end
+      end
+    end
+  end)
+end
+
 local function RefreshUnit(unit, force)
   for _, entry in ipairs(ENTRIES) do
     if entry.unit == unit then Refresh(entry, force) end
@@ -1239,12 +1267,6 @@ local function SetNumber(key, n)
     if key == "gradientAlpha" then ApplyBackground(entry) end
     if entry.model and entry.holder:IsShown() then ApplyCamera(entry) end
   end
-end
-
-local function SetSquare(on)
-  DB.square = on
-  for _, entry in ipairs(ENTRIES) do ApplyStyle(entry) end
-  RefreshAll(true)
 end
 
 local function SetAnimationMode(mode)
@@ -1609,9 +1631,6 @@ local function BuildWindow()
       function(on) DB.frames[key] = on; RefreshAll(true) end)
   end
 
-  local function IsRound() return not DB.square end
-  local function IsSquare() return DB.square == true end
-
   -- Two check boxes per row, for a list of { key, label } choices.
   local function AddChoices(list, top, current, apply)
     for i, item in ipairs(list) do
@@ -1623,10 +1642,7 @@ local function BuildWindow()
 
   -- ===== Left column =====
   AddSection("GENERAL", -72, 58)
-  AddCheck("Custom frames", 28, -98, function() return DB.square end,
-    function(on) SetSquare(on); f.refresh() end,
-    "Portraits 3D's own rounded-square portrait frames, in place of Blizzard's round ones, shaded to match the rest of the unit frame. Turn off to show the 3D model in Blizzard's round frames.")
-  AddCheck("Minimap button", 168, -98, function() return not DB.hideMinimap end,
+  AddCheck("Minimap button", 28, -98, function() return not DB.hideMinimap end,
     function(on) SetMinimapHidden(not on) end)
 
   AddSection("FRAMES", -138, 102)
@@ -1640,13 +1656,13 @@ local function BuildWindow()
   AddSection("ICONS & EFFECTS", -248, 102)
   AddCheck("Level badge", 28, -274, function() return DB.showBadge ~= false end,
     function(on) DB.showBadge = on; RefreshAll(true) end,
-    "The level on a round badge at the frame's corner (Custom frames only).", IsSquare)
+    "The level on a round badge at the frame's corner.")
   AddCheck("Resting Zzz", 168, -274, function() return DB.showZzz ~= false end,
     function(on) DB.showZzz = on; RefreshAll(true) end,
     "The rising Zzz on your portrait in a rested area.")
   AddCheck("Status glow", 28, -296, function() return DB.showGlow ~= false end,
     function(on) DB.showGlow = on; RefreshAll(true) end,
-    "A soft pulse around the player and pet frames: gold while resting, red in combat (Custom frames only).", IsSquare)
+    "A soft pulse around the player and pet frames: gold while resting, red in combat.")
   AddCheck("Hide combat text", 168, -296, function() return DB.hideCombatText == true end,
     function(on) DB.hideCombatText = on; RefreshAll(true) end,
     "Hides the damage and healing numbers that pop up over the player and pet portraits.")
@@ -1755,8 +1771,7 @@ local function BuildWindow()
   AddHeading("MODEL POSITION", -294)
   AddSlider(function() return K("offX") end, "Left / right", -0.5, 0.5, -312, 0.01)
   AddSlider(function() return K("offY") end, "Up / down", -0.5, 0.5, -358, 0.01)
-  -- only the round frames clip the model to a size of its own
-  AddSlider(function() return K("scale") end, "Model size (round frames)", 0.5, 1.2, -404, 0.05, IsRound)
+  AddSlider(function() return K("size") end, "Model size", 0.5, 1.2, -404, 0.05)
 
   AddSection("ANIMATION", -456, 76)
   AddChoices(ANIMATIONS, -482, function() return DB.anim end, SetAnimationMode)
@@ -1777,11 +1792,10 @@ local function BuildWindow()
   borderBtn:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
     GameTooltip:SetText("Elite border mover")
-    GameTooltip:AddLine("Line up the elite, rare and boss borders on the custom target frame by hand (Custom frames only).", 1, 1, 1, true)
+    GameTooltip:AddLine("Line up the elite, rare and boss borders on the target frame by hand.", 1, 1, 1, true)
     GameTooltip:Show()
   end)
   borderBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-  controls[#controls + 1] = function() borderBtn:SetEnabled(DB.square == true) end
 
   local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   reset:SetSize(140, 22)
@@ -1798,9 +1812,8 @@ local function BuildWindow()
     SetNumber("gradientAlpha", DEFAULTS.gradientAlpha)
     SetMinimapHidden(DEFAULTS.hideMinimap)
     DB.decoStyle = nil
-    SetSquare(DEFAULTS.square)
     for _, prefix in ipairs({ "", "target", "party", "pet" }) do
-      for _, name in ipairs({ "scale", "zoom", "offX", "offY", "turn" }) do
+      for _, name in ipairs({ "size", "zoom", "offX", "offY", "turn" }) do
         local key = prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))
         SetNumber(key, DEFAULTS[key])
       end
@@ -2021,6 +2034,105 @@ local function Debug()
   end
 end
 
+-- /p3d dev vehicle: a preview of the vehicle frames, which cannot be seen in game
+-- outside a vehicle. Built only from frames of our own (switching Blizzard's player
+-- frame to its vehicle look from an addon taints it): the game's vehicle frame
+-- picture with its ring cut out, and our border, shadow, plate panel and model laid
+-- out the way Layout lays them out for that ring, at one picture pixel per unit.
+local UNIT_FRAME_FILE = 8036209 -- the game's unit frame picture
+local VEHICLE_PREVIEWS = {
+  -- the picture's part of the file (half size, as RINGS), which ring is in it and
+  -- which side its bars are on
+  { label = "Player (vehicle)", l = 6, r = 200, t = 5.5, b = 73.5, ringX = 40, bars = 1 },
+  { label = "Target (vehicle)", l = 204, r = 398, t = 8, b = 75.5, ringX = 364, bars = -1 },
+}
+local vehiclePreview
+local function ToggleVehiclePreview()
+  if vehiclePreview then
+    vehiclePreview:SetShown(not vehiclePreview:IsShown())
+    return vehiclePreview:IsShown()
+  end
+  local win = CreateFrame("Frame", nil, UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+  win:SetSize(440, 200)
+  win:SetPoint("CENTER", 0, 120)
+  win:SetFrameStrata("DIALOG")
+  win:SetMovable(true)
+  win:EnableMouse(true)
+  win:RegisterForDrag("LeftButton")
+  win:SetScript("OnDragStart", win.StartMoving)
+  win:SetScript("OnDragStop", win.StopMovingOrSizing)
+  local back = win:CreateTexture(nil, "BACKGROUND")
+  back:SetAllPoints()
+  back:SetColorTexture(0.08, 0.08, 0.09, 0.85)
+  local title = win:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  title:SetPoint("TOP", 0, -8)
+  title:SetText("Vehicle frames preview (drag to move, /p3d dev vehicle to close)")
+  for i, p in ipairs(VEHICLE_PREVIEWS) do
+    local ring
+    for _, r in ipairs(RINGS) do if r.x == p.ringX then ring = r end end
+    local w, h = p.r - p.l, p.b - p.t
+    local f = CreateFrame("Frame", nil, win)
+    f:SetSize(w, h)
+    f:SetPoint("TOP", win, "TOP", 0, -32 - (i - 1) * (h + 18))
+    local name = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    name:SetPoint("BOTTOM", f, "TOP", 0, 1)
+    name:SetText(p.label)
+    local pic = f:CreateTexture(nil, "BORDER")
+    pic:SetAllPoints()
+    pic:SetTexture(UNIT_FRAME_FILE)
+    pic:SetTexCoord(p.l / ATLAS_W, p.r / ATLAS_W, p.t / ATLAS_H, p.b / ATLAS_H)
+    if ring then
+      -- the ring's centre, from the picture's centre (y up)
+      local dx, dy = ring.x - (p.l + p.r) / 2, (p.t + p.b) / 2 - ring.y
+      local away = -p.bars
+      local fit = ring.small and FIT_SMALL or FIT
+      local cut = ring.cut or ring.r - PLATE_KEEP
+      local hole = f:CreateMaskTexture()
+      local flat = ring.tight and FLAT_CUT_TIGHT or FLAT_CUT
+      hole:SetTexture((ring.tight and RING_HOLE_TIGHT_TEXTURE or RING_HOLE_TEXTURE) .. (p.bars < 0 and "Mirror" or ""), "CLAMP", "CLAMP")
+      hole:SetSize(2 * cut / flat, 2 * cut / flat)
+      hole:SetPoint("CENTER", f, "CENTER", dx, dy)
+      pic:AddMaskTexture(hole)
+      local shift = ring.shift or fit.shift
+      local cx, cy = dx + away * (fit.gap / 2 + shift - fit.shrink / 2), dy - (ring.down or fit.down)
+      local size = 2 * (ring.r + 0.5) - fit.gap - fit.shrink
+      if ring.panel then
+        local fill = f:CreateTexture(nil, "BORDER", nil, -1)
+        local inner = cx + p.bars * (size / 2 - size * (1 - HOLE) / 4)
+        local outer = dx + p.bars * ring.panel.x
+        fill:SetPoint("TOPLEFT", f, "CENTER", math.min(inner, outer), dy - ring.panel.top)
+        fill:SetPoint("BOTTOMRIGHT", f, "CENTER", math.max(inner, outer), dy - ring.panel.bottom)
+        fill:SetTexture(PLATE_FILL)
+      end
+      local clip = CreateFrame("Frame", nil, f)
+      clip:SetFrameLevel(f:GetFrameLevel() + 1)
+      clip:SetSize(size * HOLE, size * HOLE)
+      clip:SetPoint("CENTER", f, "CENTER", cx, cy)
+      pcall(clip.SetClipsChildren, clip, true)
+      local bg = clip:CreateTexture(nil, "BACKGROUND")
+      bg:SetAllPoints()
+      bg:SetColorTexture(0, 0, 0, 1)
+      local model = CreateFrame("PlayerModel", nil, clip)
+      model:SetAllPoints()
+      model:SetUnit("player")
+      model:SetPortraitZoom(1)
+      local border = CreateFrame("Frame", nil, f)
+      border:SetFrameLevel(f:GetFrameLevel() + 3)
+      border:SetSize(size, size)
+      border:SetPoint("CENTER", f, "CENTER", cx, cy)
+      local frameTex = border:CreateTexture(nil, "ARTWORK")
+      frameTex:SetAllPoints()
+      frameTex:SetTexture(FRAME_TEXTURE)
+      local shadow = border:CreateTexture(nil, "BACKGROUND", nil, -8)
+      shadow:SetTexture(SHADOW_TEXTURE)
+      shadow:SetSize(size / SHADOW_RATIO, size / SHADOW_RATIO)
+      shadow:SetPoint("CENTER", border, "CENTER", 0, -SHADOW_DROP)
+    end
+  end
+  vehiclePreview = win
+  return true
+end
+
 SLASH_PORTRAITS3D1 = "/p3d"
 SlashCmdList["PORTRAITS3D"] = function(msg)
   local cmd, arg = (msg or ""):match("^(%S*)%s*(.-)$")
@@ -2140,11 +2252,25 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
             tex:GetLeft() or -1, tex:GetTop() or -1, tex:GetWidth() or -1, tex:GetHeight() or -1, tex:GetEffectiveScale() or -1))
           Say(string.format("  portrait centre %.1f,%.1f %.1fx%.1f scale %.3f",
             pcx or -1, pcy or -1, p:GetWidth() or -1, p:GetHeight() or -1, p:GetEffectiveScale() or -1))
-          local dx, dy, radius = RingGeometry(entry)
+          local dx, dy, radius, _, ring = RingGeometry(entry)
           Say(radius and string.format("  ring offset %.1f,%.1f radius %.1f", dx, dy, radius) or "  ring not matched (using a guess)")
+          if ring then Say(string.format("  matched ring %s,%s r %s, plate panel %s", tostring(ring.x or ring.dx), tostring(ring.y or ring.dy),
+            tostring(ring.r), ring.panel and "yes" or "none")) end
           Say(string.format("  square %.1f", entry.border:GetWidth() or -1))
+          local fill = entry.plateFill
+          if fill then
+            local l, t, w, h = fill:GetLeft(), fill:GetTop(), fill:GetWidth(), fill:GetHeight()
+            Say(string.format("  plate panel: wanted %s, shown %s, visible %s, layer %s %s (frame picture %s %s), at L%.1f T%.1f %.1fx%.1f",
+              tostring(entry.wantFill), tostring(fill:IsShown()), tostring(fill:IsVisible()), tostring(fill:GetDrawLayer()),
+              tostring(select(2, fill:GetDrawLayer())), tostring(tex:GetDrawLayer()), tostring(select(2, tex:GetDrawLayer())),
+              l or -1, t or -1, w or -1, h or -1))
+          else
+            Say("  plate panel: not made (no frame picture to paint under)")
+          end
         end
       end
+    elseif sub == "vehicle" then
+      Say(ToggleVehiclePreview() and "vehicle frames preview shown (our own copy; the game's frames are not touched)" or "vehicle frames preview closed")
     elseif sub == "tot" then
       for _, entry in ipairs(ENTRIES) do
         if entry.unit == "targettarget" and entry.portrait then
@@ -2155,7 +2281,7 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
         end
       end
     else
-      Say("/p3d dev testparty | dump <unit> | debug | atlas | ring [unit] | shown [unit] | tot | bordertest")
+      Say("/p3d dev testparty | vehicle | dump <unit> | debug | atlas | ring [unit] | shown [unit] | tot | bordertest")
     end
   elseif cmd == "" or cmd == "options" or cmd == "config" then
     ToggleWindow()
@@ -2181,14 +2307,12 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     DB.version = DB.version or 10
     -- 11: target and party got their own size / zoom; start them from the player's.
     if DB.version < 11 then
-      DB.targetScale, DB.partyScale = DB.scale, DB.scale
       DB.targetZoom, DB.partyZoom = DB.zoom, DB.zoom
       DB.version = 11
     end
     -- 12: the original rounded square was replaced by the custom frames, which are on
     -- by default; turn them on once, and drop the old square's size / position settings.
     if DB.version < 12 then
-      DB.square = true
       for _, prefix in ipairs({ "", "target", "party", "pet" }) do
         for _, name in ipairs({ "squareSize", "frameX" }) do
           DB[prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))] = nil
@@ -2196,6 +2320,18 @@ frame:SetScript("OnEvent", function(self, event, arg1)
       end
       DB.squareStyle, DB.decoStyle = nil, nil
       DB.version = 12
+    end
+    -- 13: the elite / rare / boss border is placed from the custom square instead of
+    -- from the game's own border, so positions saved the old way no longer fit.
+    if DB.version < 13 then
+      DB.decoStyle = nil
+      DB.version = 13
+    end
+    -- 14: the custom frames are the only look; the round frames and their own
+    -- model size are gone.
+    if DB.version < 14 then
+      DB.square, DB.scale, DB.targetScale, DB.partyScale, DB.petScale = nil, nil, nil, nil, nil
+      DB.version = 14
     end
     self:UnregisterEvent("ADDON_LOADED")
     BuildPanel()
@@ -2209,6 +2345,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     end
     -- Party members walking in and out of range raise no clean event.
     C_Timer.NewTicker(1, function() RefreshAll(false) end)
+    WatchScale()
   elseif event == "UNIT_PORTRAIT_UPDATE" or event == "UNIT_MODEL_CHANGED" then
     RefreshUnit(arg1, true)
     -- target of target gets no event of its own; reload it when its unit changes looks

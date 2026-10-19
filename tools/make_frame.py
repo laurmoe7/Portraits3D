@@ -1,6 +1,6 @@
 """Draws the addon's small textures: Textures/RoundedGlow.tga (the resting / combat
-glow around the custom frame), BadgeDisc.tga and BadgeRing.tga (the level badge) and
-Blank.tga. The custom frame itself is drawn by tools/make_blend_frame.py.
+glow around the custom frame), BadgeDisc.tga and BadgeRing.tga (the level badge),
+PlateFill.tga (the plate's brown end panel) and Blank.tga. The custom frame itself is drawn by tools/make_blend_frame.py.
 Needs numpy only.   Usage: py tools/make_frame.py"""
 import struct
 import numpy as np
@@ -74,3 +74,32 @@ open("Textures/BadgeRing.tga", "wb").write(bhdr + rpx[..., [2, 1, 0, 3]].tobytes
 blank = np.zeros((16, 16, 4), dtype=np.uint8)
 bl_hdr = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, 16, 16, 32, 0x28)
 open("Textures/Blank.tga", "wb").write(bl_hdr + blank.tobytes())
+
+# ---- Textures/PlateFill.tga: the dark brown panel at the end of the bar plate, between
+# the ring and the plate's first line. On the game's picture it lies under the ring,
+# so it goes when the ring is cut out; this one is drawn under the game's picture to
+# fill that strip again. Mottled olive brown with faint vertical streaks, in shadow
+# under the plate's top line and above its bottom line. Stretched to the strip in game.
+PW, PH = 32, 128
+prng = np.random.default_rng(5)
+def smooth(cells_x, cells_y, w, h):    # smooth noise (0..1) over a w x h picture
+    g = prng.random((cells_y + 1, cells_x + 1))
+    iy = np.linspace(0, cells_y, h, endpoint=False); ix = np.linspace(0, cells_x, w, endpoint=False)
+    y0, x0 = iy.astype(int), ix.astype(int)
+    fy, fx = iy - y0, ix - x0
+    fy, fx = fy * fy * (3 - 2 * fy), fx * fx * (3 - 2 * fx)
+    rows = g[y0] * (1 - fy)[:, None] + g[y0 + 1] * fy[:, None]
+    return rows[:, x0] * (1 - fx)[None, :] + rows[:, x0 + 1] * fx[None, :]
+py_ = (np.arange(PH) + 0.5) / PH
+shade = np.clip(np.minimum(py_, 1 - py_) / 0.1, 0, 1) ** 0.7   # dark under / above the plate lines
+shade = (0.4 + 0.6 * shade)[:, None]
+mottle = 0.7 + 0.6 * smooth(3, 10, PW, PH)
+streaks = 1 + 0.4 * (smooth(10, 3, PW, PH) - 0.5)
+grain = 1 + 0.18 * (prng.random((PH, PW)) - 0.5)
+v = shade * mottle * streaks * grain
+pcol = np.array((96, 66, 26)) * v[..., None] * np.dstack([np.ones_like(v), np.ones_like(v), 0.85 + 0.3 * smooth(4, 6, PW, PH)])
+ppx = np.zeros((PH, PW, 4), dtype=np.uint8)
+ppx[..., :3] = np.clip(pcol + 0.5, 0, 255).astype(np.uint8)
+ppx[..., 3] = 255
+p_hdr = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, PW, PH, 32, 0x28)
+open("Textures/PlateFill.tga", "wb").write(p_hdr + ppx[..., [2, 1, 0, 3]].tobytes())
