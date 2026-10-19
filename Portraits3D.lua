@@ -241,29 +241,47 @@ end
 -- With the custom frame Blizzard's level text and rest glow are drawn over the
 -- model, so they are hidden and the level is shown on our own badge instead.
 local hooked = {}
+-- our own SetAlpha(0), told apart from the game's in the SetAlpha hook
+local function Quiet(obj)
+  obj.portraits3dBusy = true
+  obj:SetAlpha(0)
+  obj.portraits3dBusy = nil
+end
 local function Hush(obj, on)
   local was = obj.portraits3dHush
   obj.portraits3dHush = on
-  -- Only give the alpha back to pieces we hid ourselves; forcing 1 on everything
-  -- (this runs every second) showed pieces the game had faded out.
-  if on then obj:SetAlpha(0) elseif was then obj:SetAlpha(1) end
+  -- The alpha a piece had when hidden (or that the game gave it since) is what it
+  -- gets back; forcing 1 showed pieces the game had faded out.
+  if on then
+    if not was then obj.portraits3dAlpha = obj:GetAlpha() end
+    Quiet(obj)
+  elseif was then
+    obj:SetAlpha(obj.portraits3dAlpha or 1)
+  end
   -- Blizzard shows the glow again and pulses it with SetAlpha; keep it hidden.
   if on and not hooked[obj] then
     hooked[obj] = true
     if obj.Show then
       hooksecurefunc(obj, "Show", function(self)
-        if self.portraits3dHush then self:SetAlpha(0) end
+        if self.portraits3dHush then Quiet(self) end
       end)
     end
     if obj.SetAlpha then
       hooksecurefunc(obj, "SetAlpha", function(self, a)
-        if self.portraits3dHush and a ~= 0 then self:SetAlpha(0) end
+        if self.portraits3dHush and not self.portraits3dBusy then
+          self.portraits3dAlpha = a
+          if a ~= 0 then Quiet(self) end
+        end
       end)
     end
     -- newer game versions can also set the alpha from a true / false value
     if obj.SetAlphaFromBoolean then
       pcall(hooksecurefunc, obj, "SetAlphaFromBoolean", function(self)
-        if self.portraits3dHush then self:SetAlpha(0) end
+        if self.portraits3dHush then
+          local ok, a = pcall(self.GetAlpha, self)
+          if ok and type(a) == "number" then self.portraits3dAlpha = a end
+          Quiet(self)
+        end
       end)
     end
   end
@@ -274,7 +292,10 @@ end
 local GLOW_WORDS = { "status", "glow", "flash", "attackmode", "incombat" }
 local function ScanGlows(root, skip, found, depth, maxDepth)
   if depth > (maxDepth or 5) then return end
-  for _, region in ipairs({ root:GetRegions() }) do
+  -- a status bar's pictures are the bar itself and its heal / absorb parts, whose
+  -- names can hold "status" too; never glows
+  local isBar = root.GetObjectType and root:GetObjectType() == "StatusBar"
+  for _, region in ipairs(isBar and {} or { root:GetRegions() }) do
     local atlas = region.GetAtlas and region:GetAtlas()
     local file = region.GetTexture and region:GetTexture()
     for _, name in ipairs({ type(atlas) == "string" and atlas or false, type(file) == "string" and file or false,
@@ -1414,6 +1435,10 @@ local function ToggleBorderTest()
   default:SetText("Default")
   default:SetScript("OnClick", function()
     -- back to the built-in place and size (and forget the saved numbers)
+    if TEST.deco == "off" then
+      print("|cff66ccffPortraits3D|r pick Elite, Rare or Boss first")
+      return
+    end
     if DB.decoStyle then DB.decoStyle[Kind()] = nil end
     LoadKind()
     UpdateDeco()
@@ -1853,8 +1878,11 @@ local function ToggleWindow()
     win:Hide()
     return
   end
-  -- Close the game's settings so the unit frames are visible while tuning.
-  if SettingsPanel and SettingsPanel:IsShown() then pcall(HideUIPanel, SettingsPanel) end
+  -- Close the game's settings so the unit frames are visible while tuning (not in
+  -- combat: closing it from an addon there can get the game's own actions blocked).
+  if SettingsPanel and SettingsPanel:IsShown() and not (InCombatLockdown and InCombatLockdown()) then
+    pcall(HideUIPanel, SettingsPanel)
+  end
   win:Show()
 end
 
@@ -2156,8 +2184,12 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
       for i = 1, 4 do
         local frame = Resolve("PartyFrame.MemberFrame" .. i) or _G["PartyMemberFrame" .. i]
         if type(frame) == "table" and frame.Show then
-          pcall(testParty and frame.Show or frame.Hide, frame)
-          shown = shown + 1
+          if testParty then
+            pcall(frame.Show, frame)
+            shown = shown + 1
+          elseif not UnitExists("party" .. i) then
+            pcall(frame.Hide, frame) -- (a real party member's frame stays)
+          end
         end
       end
       RefreshAll(true)
