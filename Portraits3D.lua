@@ -122,9 +122,12 @@ local ENTRIES = {
                "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.HitIndicator", "PlayerHitIndicator" },
     rest = { "PlayerFrame.PlayerFrameContainer.FrameFlash",
              "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.PlayerPortraitCornerIcon",
-             "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.StatusTexture",
-             "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.StatusTexture",
-             "PlayerStatusTexture", "PlayerStatusGlow" } },
+             "PlayerStatusGlow" },
+    -- the resting / combat glow behind the name (gold / red): kept, but cut off at
+    -- our square's edge so it is not drawn over the model
+    plateGlow = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.StatusTexture",
+                  "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.StatusTexture",
+                  "PlayerStatusTexture" } },
   { unit = "target", paths = { "TargetFrame.TargetFrameContainer.Portrait", "TargetFramePortrait" },
     ringTex = { "TargetFrame.TargetFrameContainer.FrameTexture" },
     -- the health bar, greyed for an offline player (Blizzard only does that on party frames)
@@ -287,6 +290,28 @@ local function Hush(obj, on)
   end
 end
 
+-- Holds a piece at an alpha of our own (nil lets the game set it again): Blizzard
+-- flashes the glow behind the player's name about once a second, every frame.
+local pinned = {}
+local function Pin(obj, alpha)
+  obj.portraits3dPin = alpha
+  if alpha then
+    if not pinned[obj] then
+      pinned[obj] = true
+      hooksecurefunc(obj, "SetAlpha", function(self)
+        if self.portraits3dPin and not self.portraits3dBusy then
+          self.portraits3dBusy = true
+          self:SetAlpha(self.portraits3dPin)
+          self.portraits3dBusy = nil
+        end
+      end)
+    end
+    obj.portraits3dBusy = true
+    obj:SetAlpha(alpha)
+    obj.portraits3dBusy = nil
+  end
+end
+
 -- Finds the status / rest / glow pictures somewhere inside a unit frame, in
 -- case they are not at the paths we guessed. Our own frames are skipped.
 local GLOW_WORDS = { "status", "glow", "flash", "attackmode", "incombat" }
@@ -419,6 +444,30 @@ local function Decorate(entry, active)
     local obj = Resolve(path)
     if type(obj) == "table" and obj.SetAlpha then HideGlow(obj) end
   end
+  -- The glow behind the name stays, with a mask (made in Setup, placed by Layout)
+  -- that only lets it show on the bars' side of our square.
+  entry.plateGlows = entry.plateGlows or {}
+  for _, path in ipairs(entry.plateGlow or {}) do
+    local obj = Resolve(path)
+    local mask = entry.plateMask
+    if mask and type(obj) == "table" and obj.AddMaskTexture then
+      entry.plateGlows[obj] = true
+      -- held steady instead of Blizzard's fast flashing (our status glow below
+      -- breathes it slowly along with the square's)
+      if active then
+        if not obj.portraits3dPin then Pin(obj, 1) end
+      else
+        Pin(obj, nil)
+      end
+      if active and not obj.portraits3dPlateMask then
+        obj.portraits3dPlateMask = true
+        obj:AddMaskTexture(mask)
+      elseif not active and obj.portraits3dPlateMask then
+        obj.portraits3dPlateMask = false
+        obj:RemoveMaskTexture(mask)
+      end
+    end
+  end
   for _, path in ipairs(entry.zzz or {}) do
     local obj = Resolve(path)
     if type(obj) == "table" and obj.SetAlpha then Hush(obj, active and DB.showZzz == false) end
@@ -469,7 +518,9 @@ local function Decorate(entry, active)
       -- (pet frame: only its own pictures, not the heal / absorb bars inside it)
       pcall(ScanGlows, scanRoot, entry.holder, entry.scanFound, 0, entry.unit == "pet" and 0 or nil)
     end
-    for _, obj in ipairs(entry.scanFound or {}) do HideGlow(obj) end
+    for _, obj in ipairs(entry.scanFound or {}) do
+      if not entry.plateGlows[obj] then HideGlow(obj) end
+    end
   end
   ApplyBackground(entry)
   if entry.glowTex then
@@ -480,11 +531,21 @@ local function Decorate(entry, active)
       entry.glowTex:Show()
       if not entry.border:GetScript("OnUpdate") then -- Decorate runs every second
         entry.border:SetScript("OnUpdate", function()
-          entry.glowTex:SetAlpha(0.45 + 0.4 * math.sin(GetTime() * 3))
+          -- one slow breath (about 4 seconds) for both glows
+          local s = math.sin(GetTime() * 1.6)
+          entry.glowTex:SetAlpha(0.45 + 0.4 * s)
+          -- the glow behind the name, in step but gentler (never fading out) instead
+          -- of Blizzard's flashing, peaking at full
+          for obj in pairs(entry.plateGlows) do
+            if obj.portraits3dPin then Pin(obj, 0.7 + 0.3 * s) end
+          end
         end)
       end
     else
       entry.glowTex:Hide()
+      for obj in pairs(entry.plateGlows) do
+        if obj.portraits3dPin then Pin(obj, 1) end
+      end
       entry.border:SetScript("OnUpdate", nil)
     end
   end
@@ -662,6 +723,13 @@ local function Layout(entry)
   entry.border:SetSize(size, size)
   entry.border:ClearAllPoints()
   entry.border:SetPoint("CENTER", entry.portrait, "CENTER", cx, cy)
+  if entry.plateMask then
+    -- from our square's edge on the bars' side outwards, well past the plate
+    local edge, bars, far = cx - away * size / 2, -away, 400
+    entry.plateMask:ClearAllPoints()
+    entry.plateMask:SetPoint("TOPLEFT", entry.portrait, "CENTER", bars > 0 and edge or edge - far, far)
+    entry.plateMask:SetPoint("BOTTOMRIGHT", entry.portrait, "CENTER", bars > 0 and edge + far or edge, -far)
+  end
   clip:ClearAllPoints()
   clip:SetPoint("CENTER", entry.border, "CENTER")
   if entry.glowTex then entry.glowTex:SetSize(size / GLOW_RATIO, size / GLOW_RATIO) end
@@ -894,6 +962,12 @@ local function Setup(entry)
 
   entry.portrait, entry.path, entry.holder, entry.clip, entry.model = portrait, path, holder, clip, model
   entry.bg, entry.border, entry.frameTex = bg, border, frameTex
+  if entry.plateGlow then
+    -- white inside, nothing outside: the glow behind the name shows only within it
+    local mask = holder:CreateMaskTexture()
+    mask:SetTexture("Interface/Buttons/WHITE8X8", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    entry.plateMask = mask
+  end
   holder:SetScript("OnSizeChanged", function() Layout(entry) end)
   holder:Hide()
   ApplyStyle(entry)
@@ -2057,6 +2131,22 @@ local function Debug()
     for _, list in ipairs({ entry.level or {}, entry.rest or {} }) do
       for _, p in ipairs(list) do
         if type(Resolve(p)) == "table" then Say("   hides " .. p) end
+      end
+    end
+    for _, p in ipairs(entry.plateGlow or {}) do
+      local obj = Resolve(p)
+      if type(obj) ~= "table" then
+        Say("   name glow: not found at " .. p)
+      else
+        Say(string.format("   name glow %s: shown=%s alpha=%.2f hidden by us=%s masks=%d atlas=%s", p,
+          tostring(obj:IsShown()), obj:GetAlpha() or -1, tostring(obj.portraits3dHush or false),
+          obj.GetNumMaskTextures and obj:GetNumMaskTextures() or -1, tostring(obj.GetAtlas and obj:GetAtlas())))
+      end
+    end
+    for _, obj in ipairs(entry.scanFound or {}) do
+      if not entry.plateGlows[obj] then
+        Say("   hides (found by name) " .. tostring(obj:GetName() or (obj.GetAtlas and obj:GetAtlas())
+          or (obj.GetTexture and obj:GetTexture())))
       end
     end
   end
