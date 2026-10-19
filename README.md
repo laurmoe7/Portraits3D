@@ -38,9 +38,6 @@ For troubleshooting (`/p3d dev` lists them all):
 | `/p3d dev dump <unit>` | lists the named pieces inside a unit frame |
 | `/p3d dev ring <unit>` | shows what the custom frame measured for that frame's ring |
 | `/p3d dev shown <unit>` | lists Blizzard's pictures still drawn around the portrait |
-| `/p3d dev atlas` | prints each frame's picture and where it sits in the game's file |
-| `/p3d dev tot` | shows the target of target's flat portrait pieces |
-| `/p3d dev bordertest` | opens the Elite border mover |
 
 ## Notes
 

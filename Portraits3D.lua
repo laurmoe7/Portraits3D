@@ -2216,22 +2216,6 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
       end
       walk(root, root.GetName and root:GetName() or unit, 0)
       Say(count .. " pictures shown around the portrait (" .. skipped .. " could not be read)")
-    elseif sub == "bordertest" then
-      ToggleBorderTest()
-    elseif sub == "atlas" then
-      -- /p3d dev atlas: the frame picture each unit frame shows, and where in its file
-      for _, entry in ipairs(ENTRIES) do
-        local tex = entry.ringTexObj
-        local atlas = tex and tex.GetAtlas and tex:GetAtlas()
-        local info = atlas and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)
-        if info then
-          Say(string.format("%s %s file=%s L%.5f R%.5f T%.5f B%.5f %sx%s", entry.unit, atlas, tostring(info.file or info.filename),
-            info.leftTexCoord or -1, info.rightTexCoord or -1, info.topTexCoord or -1, info.bottomTexCoord or -1,
-            tostring(info.width), tostring(info.height)))
-        else
-          Say(entry.unit .. ": " .. (atlas and (atlas .. " (no atlas info)") or "no frame picture found yet"))
-        end
-      end
     elseif sub == "ring" then
       -- /p3d dev ring [unit]: what the custom frame measured for that frame's ring
       local unit = rest ~= "" and rest or "player"
@@ -2271,17 +2255,8 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
       end
     elseif sub == "vehicle" then
       Say(ToggleVehiclePreview() and "vehicle frames preview shown (our own copy; the game's frames are not touched)" or "vehicle frames preview closed")
-    elseif sub == "tot" then
-      for _, entry in ipairs(ENTRIES) do
-        if entry.unit == "targettarget" and entry.portrait then
-          for i, piece in ipairs(FlatPieces(entry)) do
-            Say(string.format("flat piece %d: alpha=%.1f hushed=%s shown=%s", i, piece:GetAlpha(), tostring(piece.portraits3dHush), tostring(piece:IsShown())))
-          end
-          Say("model shown: " .. tostring(entry.holder and entry.holder:IsShown()) .. ", path: " .. tostring(entry.path))
-        end
-      end
     else
-      Say("/p3d dev testparty | vehicle | dump <unit> | debug | atlas | ring [unit] | shown [unit] | tot | bordertest")
+      Say("/p3d dev testparty | vehicle | debug | ring [unit] | shown [unit] | dump <unit>")
     end
   elseif cmd == "" or cmd == "options" or cmd == "config" then
     ToggleWindow()
