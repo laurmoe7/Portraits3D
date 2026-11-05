@@ -16,7 +16,7 @@ Portraits3D is a World of Warcraft addon that replaces the flat portraits on the
 
 ## Install
 
-Copy the `Portraits3D` folder to `World of Warcraft\_classic_beta_\Interface\AddOns\` (so you have `AddOns\Portraits3D\Portraits3D.toc`) and restart the game or `/reload`.
+Copy the `Portraits3D` folder to `World of Warcraft\_forever_\Interface\AddOns\` (so you have `AddOns\Portraits3D\Portraits3D.toc`) and restart the game or `/reload`.
 
 ## Use
 

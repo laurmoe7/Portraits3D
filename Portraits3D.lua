@@ -101,6 +101,13 @@ local GROUPS = {
 }
 local DB
 
+-- Newer clients hand addons "secret" values (a unit's identity, its PvP state, ...)
+-- that cannot be compared or tested; Safe gives `default` in place of one.
+local function IsSecret(v) return issecretvalue ~= nil and issecretvalue(v) end
+local function Safe(v, default)
+  if IsSecret(v) then return default end
+  return v
+end
 
 -- Each entry: the unit, and candidate paths to the portrait texture (first one
 -- that is a texture wins). Paths are looked up from _G at call time because
@@ -127,7 +134,10 @@ local ENTRIES = {
     -- our square's edge so it is not drawn over the model
     plateGlow = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.StatusTexture",
                   "PlayerFrame.PlayerFrameContent.PlayerFrameContentContextual.StatusTexture",
-                  "PlayerStatusTexture" } },
+                  "PlayerStatusTexture" },
+    -- Forever's PvP badge (a small circle with the faction icon on the ring's outer
+    -- edge; the icon is anchored to the circle): moved onto our square's outer edge
+    pvp = { "PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.PvpBackgroundCircle" } },
   { unit = "target", paths = { "TargetFrame.TargetFrameContainer.Portrait", "TargetFramePortrait" },
     ringTex = { "TargetFrame.TargetFrameContainer.FrameTexture" },
     -- the health bar, greyed for an offline player (Blizzard only does that on party frames)
@@ -137,7 +147,10 @@ local ENTRIES = {
               "TargetFrame.TargetFrameContent.TargetFrameContentMain.LevelBackgroundCircle", "TargetFrameTextureFrameLevelText" }, side = "right",
     ring = { "TargetFrame.TargetFrameContainer" }, content = { "TargetFrame.TargetFrameContent" },
     -- round decorations: the combat flash and the elite / rare / boss ring
-    rest = { "TargetFrame.TargetFrameContainer.Flash", "TargetFrame.TargetFrameContainer.BossPortraitFrameTexture" } },
+    rest = { "TargetFrame.TargetFrameContainer.Flash", "TargetFrame.TargetFrameContainer.BossPortraitFrameTexture" },
+    pvp = { "TargetFrame.TargetFrameContent.TargetFrameContentContextual.PvpBackgroundCircle" },
+    -- the skull the game shows in the level circle of a unit too high to tell: on our badge
+    skull = { "TargetFrame.TargetFrameContent.TargetFrameContentContextual.HighLevelTexture" } },
   { unit = "focus", paths = { "FocusFrame.TargetFrameContainer.Portrait", "FocusFramePortrait" },
     ringTex = { "FocusFrame.TargetFrameContainer.FrameTexture" },
     hpBar = { "FocusFrame.healthbar", "FocusFrame.TargetFrameContent.TargetFrameContentMain.HealthBarsContainer.HealthBar",
@@ -145,7 +158,9 @@ local ENTRIES = {
     level = { "FocusFrame.TargetFrameContent.TargetFrameContentMain.LevelText",
               "FocusFrame.TargetFrameContent.TargetFrameContentMain.LevelBackgroundCircle", "FocusFrameTextureFrameLevelText" }, side = "right",
     ring = { "FocusFrame.TargetFrameContainer" }, content = { "FocusFrame.TargetFrameContent" },
-    rest = { "FocusFrame.TargetFrameContainer.Flash", "FocusFrame.TargetFrameContainer.BossPortraitFrameTexture" } },
+    rest = { "FocusFrame.TargetFrameContainer.Flash", "FocusFrame.TargetFrameContainer.BossPortraitFrameTexture" },
+    pvp = { "FocusFrame.TargetFrameContent.TargetFrameContentContextual.PvpBackgroundCircle" },
+    skull = { "FocusFrame.TargetFrameContent.TargetFrameContentContextual.HighLevelTexture" } },
   { unit = "pet", paths = { "PetPortrait", "PetFrame.Portrait" },
     combat = { "PetFrame.HitIndicator", "PetHitIndicator" },
     dumpRoot = { "PetFrame" }, bgRoot = "PetFrame",
@@ -161,28 +176,36 @@ local ENTRIES = {
     content = { "PartyFrame.MemberFrame1.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame1.Texture" },
     -- combat / status glows (round shaped)
-    rest = { "PartyFrame.MemberFrame1.threatIndicator", "PartyFrame.MemberFrame1.PartyMemberOverlay.Status" } },
+    rest = { "PartyFrame.MemberFrame1.threatIndicator", "PartyFrame.MemberFrame1.PartyMemberOverlay.Status" },
+    -- the PvP icon (no circle here), on the ring's lower left: moved to our square's corner
+    pvp = { "PartyFrame.MemberFrame1.PartyMemberOverlay.PVPIcon" }, pvpCorner = true },
   { unit = "party2", paths = { "PartyFrame.MemberFrame2.Portrait", "PartyMemberFrame2.portrait", "PartyMemberFrame2Portrait" },
     root = "PartyFrame.MemberFrame2", ring = { "PartyFrame.MemberFrame2" },
     -- leader, PvP and disconnect icons: lifted above the custom frame like the bars
     content = { "PartyFrame.MemberFrame2.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame2.Texture" },
     -- combat / status glows (round shaped)
-    rest = { "PartyFrame.MemberFrame2.threatIndicator", "PartyFrame.MemberFrame2.PartyMemberOverlay.Status" } },
+    rest = { "PartyFrame.MemberFrame2.threatIndicator", "PartyFrame.MemberFrame2.PartyMemberOverlay.Status" },
+    -- the PvP icon (no circle here), on the ring's lower left: moved to our square's corner
+    pvp = { "PartyFrame.MemberFrame2.PartyMemberOverlay.PVPIcon" }, pvpCorner = true },
   { unit = "party3", paths = { "PartyFrame.MemberFrame3.Portrait", "PartyMemberFrame3.portrait", "PartyMemberFrame3Portrait" },
     root = "PartyFrame.MemberFrame3", ring = { "PartyFrame.MemberFrame3" },
     -- leader, PvP and disconnect icons: lifted above the custom frame like the bars
     content = { "PartyFrame.MemberFrame3.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame3.Texture" },
     -- combat / status glows (round shaped)
-    rest = { "PartyFrame.MemberFrame3.threatIndicator", "PartyFrame.MemberFrame3.PartyMemberOverlay.Status" } },
+    rest = { "PartyFrame.MemberFrame3.threatIndicator", "PartyFrame.MemberFrame3.PartyMemberOverlay.Status" },
+    -- the PvP icon (no circle here), on the ring's lower left: moved to our square's corner
+    pvp = { "PartyFrame.MemberFrame3.PartyMemberOverlay.PVPIcon" }, pvpCorner = true },
   { unit = "party4", paths = { "PartyFrame.MemberFrame4.Portrait", "PartyMemberFrame4.portrait", "PartyMemberFrame4Portrait" },
     root = "PartyFrame.MemberFrame4", ring = { "PartyFrame.MemberFrame4" },
     -- leader, PvP and disconnect icons: lifted above the custom frame like the bars
     content = { "PartyFrame.MemberFrame4.PartyMemberOverlay" },
     ringTex = { "PartyFrame.MemberFrame4.Texture" },
     -- combat / status glows (round shaped)
-    rest = { "PartyFrame.MemberFrame4.threatIndicator", "PartyFrame.MemberFrame4.PartyMemberOverlay.Status" } },
+    rest = { "PartyFrame.MemberFrame4.threatIndicator", "PartyFrame.MemberFrame4.PartyMemberOverlay.Status" },
+    -- the PvP icon (no circle here), on the ring's lower left: moved to our square's corner
+    pvp = { "PartyFrame.MemberFrame4.PartyMemberOverlay.PVPIcon" }, pvpCorner = true },
 }
 
 local function Resolve(path)
@@ -273,7 +296,7 @@ local function Hush(obj, on)
       hooksecurefunc(obj, "SetAlpha", function(self, a)
         if self.portraits3dHush and not self.portraits3dBusy then
           self.portraits3dAlpha = a
-          if a ~= 0 then Quiet(self) end
+          if IsSecret(a) or a ~= 0 then Quiet(self) end
         end
       end)
     end
@@ -309,6 +332,28 @@ local function Pin(obj, alpha)
     obj.portraits3dBusy = true
     obj:SetAlpha(alpha)
     obj.portraits3dBusy = nil
+  end
+end
+
+-- Anchors one of Blizzard's pictures to a frame of ours (`anchor`; nil or false
+-- gives it its own anchor back). Checked every time it is called: the game can
+-- anchor the picture again itself.
+local function Moor(obj, anchor, point, relPoint, x, y)
+  if not (obj and obj.SetPoint and obj.GetPoint) then return end
+  if anchor then
+    local ok, p, rel, rp, px, py = pcall(obj.GetPoint, obj, 1)
+    if not obj.portraits3dMoored then
+      obj.portraits3dMoored = { ok and p or "CENTER", ok and rel or nil, ok and rp or "CENTER", ok and px or 0, ok and py or 0 }
+    end
+    if not (ok and not IsSecret(rel) and rel == anchor) then
+      obj:ClearAllPoints()
+      obj:SetPoint(point, anchor, relPoint, x, y)
+    end
+  elseif obj.portraits3dMoored then
+    local p = obj.portraits3dMoored
+    obj.portraits3dMoored = nil
+    obj:ClearAllPoints()
+    obj:SetPoint(p[1], p[2] or obj:GetParent(), p[3], p[4], p[5])
   end
 end
 
@@ -511,6 +556,27 @@ local function Decorate(entry, active)
     end
   end
   for _, obj in ipairs(entry.levelFound or {}) do Hush(obj, active) end
+  -- The PvP badge stays the game's own (shown, hidden and drawn by it; whether it
+  -- is shown can be secret to addons) and is only moved: onto the custom square's
+  -- outer edge (its corner on the party frames), where it sat on the ring.
+  for _, path in ipairs(entry.pvp or {}) do
+    local obj = Resolve(path)
+    if type(obj) == "table" then
+      local right = entry.side == "right"
+      if entry.pvpCorner then
+        Moor(obj, active and entry.border, "CENTER", right and "BOTTOMRIGHT" or "BOTTOMLEFT", 0, 0)
+      else
+        Moor(obj, active and entry.border, "CENTER", right and "RIGHT" or "LEFT", 0, 0)
+      end
+    end
+  end
+  for _, path in ipairs(entry.skull or {}) do
+    local obj = Resolve(path)
+    if type(obj) == "table" and entry.badge then
+      Moor(obj, active and entry.badge, "CENTER", "CENTER", 0, 0)
+      Hush(obj, active and DB.showBadge == false) -- hidden along with the badge
+    end
+  end
   local scanRoot = (entry.unit == "player" and PlayerFrame) or (entry.unit == "pet" and PetFrame) or nil
   if scanRoot then
     if not entry.scanned and entry.holder then
@@ -552,8 +618,10 @@ local function Decorate(entry, active)
   if entry.badge then
     entry.badge:SetShown(active and DB.showBadge ~= false)
     if active then
-      local n = UnitLevel(entry.unit)
-      entry.badgeText:SetText((n and n > 0) and n or "??")
+      local n = Safe(UnitLevel(entry.unit), 0)
+      -- too high to tell: the game's skull sits on the badge where it has one, else "??"
+      local skull = entry.skull and Resolve(entry.skull[1])
+      entry.badgeText:SetText((n and n > 0) and n or (type(skull) == "table" and "" or "??"))
       -- like Blizzard: white on the player frame, the difficulty colour on units you
       -- can attack (red for "??"), yellow elsewhere
       local r, g, b = 1, 0.82, 0
@@ -583,9 +651,15 @@ function ScanLevel(root, found, seen, depth, skip)
       end
     end
   end
+  -- (not the PvP badge's circle, which is the same picture)
+  local keys = {}
+  for key, value in pairs(root) do
+    if type(key) == "string" and type(value) == "table" then keys[value] = key end
+  end
   for _, region in ipairs({ root:GetRegions() }) do
     local atlas = region.GetAtlas and region:GetAtlas()
-    if type(atlas) == "string" and not seen[region] then
+    if type(atlas) == "string" and not IsSecret(atlas) and not seen[region]
+        and not (keys[region] or ""):lower():find("^pvp") then
       if atlas:lower() == LEVEL_ATLAS then
         seen[region] = true
         found[#found + 1] = region
@@ -1023,7 +1097,7 @@ local function FlatPieces(entry)
       local file = region.GetTexture and region:GetTexture()
       -- (not our plate panel: a picture without an atlas on the same frame, which this
       -- took for the backdrop and hid on the pet and target of target)
-      if region.SetAlpha and not atlas and type(file) == "number" and file <= 0 and region ~= entry.plateFill then
+      if region.SetAlpha and not atlas and type(file) == "number" and not IsSecret(file) and file <= 0 and region ~= entry.plateFill then
         local known = false
         for _, have in ipairs(list) do if have == region then known = true end end
         if not known then list[#list + 1] = region end
@@ -1145,7 +1219,11 @@ local function Refresh(entry, force)
   -- the disconnect bolt on it). The game cannot build one for a unit out of sight
   -- (after a /reload, say): the frame then shows a grey gradient (and the bolt).
   local visible = exists and UnitIsVisible(unit)
-  local guid = exists and UnitGUID(unit) or nil
+  local guid = exists and Safe(UnitGUID(unit)) or nil
+  -- In instances the game keeps a unit's GUID secret (nothing can be compared with
+  -- it); such units are told apart by a count raised by the events for a change of
+  -- unit instead, so the model is reloaded on those and kept between them.
+  if exists and guid == nil then guid = "secret:" .. (entry.gen or 0) end
   local cached = guid ~= nil and entry.modelGUID == guid
   local online = exists and UnitIsConnected(unit) and true or false
   local use3D = visible or cached
@@ -1161,7 +1239,7 @@ local function Refresh(entry, force)
   for _, bolt in ipairs(BlizzBolts(entry)) do Hush(bolt, true) end
   Decorate(entry, true)
   for _, piece in ipairs(FlatPieces(entry)) do
-    if (piece:GetAlpha() or 0) > 0 then Hush(piece, true) end
+    if Safe(piece:GetAlpha(), 1) > 0 then Hush(piece, true) end
   end
   if not use3D then
     local state = "empty:" .. (guid or "?") .. ":" .. tostring(online)
@@ -1348,6 +1426,19 @@ end
 local function RefreshUnit(unit, force)
   for _, entry in ipairs(ENTRIES) do
     if entry.unit == unit then Refresh(entry, force) end
+  end
+end
+
+-- Counts a change of unit on the given frames ("party" for party 1-4, "all" for
+-- every frame), for units whose GUID the game keeps secret (see Refresh).
+local function UnitChanged(...)
+  for i = 1, select("#", ...) do
+    local unit = select(i, ...)
+    for _, entry in ipairs(ENTRIES) do
+      if unit == "all" or entry.unit == unit or (unit == "party" and entry.unit:match("^party")) then
+        entry.gen = (entry.gen or 0) + 1
+      end
+    end
   end
 end
 
@@ -2084,8 +2175,8 @@ local function Dump(unit)
           and value.GetObjectType then
         lines = lines + 1
         local atlas = value.GetAtlas and value:GetAtlas()
-        local alpha = value.GetAlpha and value:GetAlpha()
-        local visible = value.IsShown and value:IsShown()
+        local alpha = Safe(value.GetAlpha and value:GetAlpha())
+        local visible = Safe(value.IsShown and value:IsShown())
         Say(string.format("%s.%s  %s%s%s", label, key, value:GetObjectType(), atlas and ("  atlas=" .. tostring(atlas)) or "",
           (alpha and visible) and string.format("  alpha=%.1f shown=%s", alpha, tostring(visible)) or ""))
         if value.GetChildren and value ~= entry.holder then walk(value, label .. "." .. key, depth + 1) end
@@ -2131,6 +2222,11 @@ local function Debug()
     for _, list in ipairs({ entry.level or {}, entry.rest or {} }) do
       for _, p in ipairs(list) do
         if type(Resolve(p)) == "table" then Say("   hides " .. p) end
+      end
+    end
+    for _, list in ipairs({ entry.pvp or {}, entry.skull or {} }) do
+      for _, p in ipairs(list) do
+        if type(Resolve(p)) == "table" then Say("   moves " .. p) end
       end
     end
     for _, p in ipairs(entry.plateGlow or {}) do
@@ -2401,6 +2497,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     DB.borderColor = nil -- the frame colour options were removed
     DB.icon = nil -- the icon picker was removed
     DB.greyDead = nil -- dead / offline units are always shown grey now (the option was removed)
+    DB.flip, DB.targetFlip, DB.hideWeapons, DB.ringCut = nil, nil, nil, nil -- older removed options
     DB.version = DB.version or 10
     -- 11: target and party got their own size / zoom; start them from the player's.
     if DB.version < 11 then
@@ -2446,12 +2543,20 @@ frame:SetScript("OnEvent", function(self, event, arg1)
   elseif event == "UNIT_PORTRAIT_UPDATE" or event == "UNIT_MODEL_CHANGED" then
     RefreshUnit(arg1, true)
     -- target of target gets no event of its own; reload it when its unit changes looks
-    if arg1 and UnitIsUnit and UnitExists("targettarget") and UnitIsUnit(arg1, "targettarget") then
+    -- (in instances the game keeps whether two units are the same secret: reload then too)
+    if arg1 and UnitIsUnit and UnitExists("targettarget") and Safe(UnitIsUnit(arg1, "targettarget"), true) then
       RefreshUnit("targettarget", true)
     end
   elseif event == "UNIT_TARGET" then
+    if arg1 == "target" then UnitChanged("targettarget") end
     RefreshUnit("targettarget", false)
   else
+    if event == "PLAYER_TARGET_CHANGED" then UnitChanged("target", "targettarget")
+    elseif event == "PLAYER_FOCUS_CHANGED" then UnitChanged("focus")
+    elseif event == "UNIT_PET" then if arg1 == "player" then UnitChanged("pet") end
+    elseif event == "GROUP_ROSTER_UPDATE" then UnitChanged("party")
+    elseif event == "PLAYER_ENTERING_WORLD" then UnitChanged("all")
+    end
     -- leaving combat: lift the bars above the custom frame if that was not allowed earlier
     if event == "PLAYER_REGEN_ENABLED" then
       for _, entry in ipairs(ENTRIES) do LiftContent(entry) end
