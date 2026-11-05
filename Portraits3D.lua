@@ -422,7 +422,9 @@ local function ApplyBackground(entry)
     -- units without a class (and grey ones: dead or offline) get the plain black gradient
     r, g, b = 0, 0, 0
     if UnitIsPlayer and UnitIsPlayer(entry.unit) and not IsGrey(entry.unit) then
+      -- the class can come back secret (e.g. target of target); it then can't be a table key
       local _, class = UnitClass(entry.unit)
+      class = Safe(class)
       local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
       if c then r, g, b = c.r, c.g, c.b end
     end
