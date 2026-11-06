@@ -26,6 +26,7 @@ local FRAME_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RoundedFrameBlend9"
 -- edge line (right against the ring) and the joints of the bar lines are kept
 local RING_HOLE_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RingHoleCut"
 local HOLE = 0.85 -- hole width of RoundedFrameBlend
+local FLAT_FIT = 0.94 -- the flat portrait's size as a fraction of the model's square
 -- a soft shadow under the frame, like the game's frame parts have; the frame fills
 -- SHADOW_RATIO of the picture, which is drawn SHADOW_DROP lower than the frame
 local SHADOW_TEXTURE = "Interface/AddOns/Portraits3D/Textures/FrameShadow"
@@ -821,6 +822,9 @@ local function Layout(entry)
   entry.model:ClearAllPoints()
   entry.model:SetPoint("CENTER", clip, "CENTER")
   entry.model:SetSize(s, s)
+  -- the flat portrait a little inside the square (whatever the Model size), so its
+  -- round edge shows
+  if entry.flat then entry.flat:SetSize(size * HOLE * FLAT_FIT, size * HOLE * FLAT_FIT) end
   -- about as big in the frame as Blizzard's bolt is on the party frames
   if entry.dcIcon then entry.dcIcon:SetSize(size * 0.7, size * 0.7) end
   if entry.badge then
@@ -920,6 +924,17 @@ local function Setup(entry)
     ApplyCamera(entry)
     if entry.lookUnit then ApplyLook(entry, entry.lookUnit) end -- loading resets the colour
   end)
+  -- The game's flat portrait, round like Blizzard's, for a unit the model frame may
+  -- not load (in a dungeon or raid, every unit outside the group: see Refresh).
+  local flat = clip:CreateTexture(nil, "ARTWORK")
+  flat:SetPoint("CENTER", clip, "CENTER")
+  flat:SetSize(1, 1) -- sized by Layout
+  flat:Hide()
+  local flatMask = clip:CreateMaskTexture()
+  flatMask:SetAllPoints(flat)
+  flatMask:SetTexture("Interface/CharacterFrame/TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+  flat:AddMaskTexture(flatMask)
+  entry.flat = flat
   -- the disconnect bolt (Blizzard's own is hidden on the party frames), in a frame
   -- of its own above the model so it stays on top of a see-through one
   local boltFrame = CreateFrame("Frame", nil, holder)
@@ -1208,6 +1223,28 @@ function ApplyLook(entry, unit)
   else
     pcall(entry.model.SetAlpha, entry.model, alpha)
   end
+  if entry.flat then
+    pcall(entry.flat.SetDesaturated, entry.flat, grey)
+    entry.flat:SetAlpha(alpha)
+  end
+end
+
+-- Whether the model frame may load this unit. Newer clients refuse a unit whose
+-- identity is kept secret from addons: in a dungeon or raid, every unit outside
+-- the group (SetUnit requires a "declassified" unit identity; CanSetUnit tells).
+local function CanLoad(entry, unit)
+  local model = entry.model
+  if not model.CanSetUnit then return true end
+  local ok, can = pcall(model.CanSetUnit, model, unit)
+  return not ok or Safe(can, true) ~= false
+end
+
+-- Shows the game's flat portrait of the unit in the square, in the model's place.
+local function ShowFlat(entry, unit)
+  if not entry.flat then return end
+  entry.model:Hide()
+  pcall(SetPortraitTexture, entry.flat, unit)
+  entry.flat:Show()
 end
 
 local function Refresh(entry, force)
@@ -1228,7 +1265,10 @@ local function Refresh(entry, force)
   if exists and guid == nil then guid = "secret:" .. (entry.gen or 0) end
   local cached = guid ~= nil and entry.modelGUID == guid
   local online = exists and UnitIsConnected(unit) and true or false
-  local use3D = visible or cached
+  -- A unit in sight that the model frame may not load (a mob in a dungeon, whose
+  -- identity is secret) gets the game's flat portrait in the square instead.
+  local flat = visible and not CanLoad(entry, unit)
+  local use3D = (visible and not flat) or cached
   -- (with no model to show, the frame stays, grey)
   if not wanted or not exists then
     Show2D(entry)
@@ -1236,18 +1276,34 @@ local function Refresh(entry, force)
   end
   -- (before Decorate, which draws the background) no model, or a dead unit's: the
   -- grey-to-transparent background, which the see-through ghost shows through
-  entry.empty = not use3D or IsDead(unit)
+  entry.empty = (not use3D and not flat) or IsDead(unit)
   GreyBar(entry, not online)
   for _, bolt in ipairs(BlizzBolts(entry)) do Hush(bolt, true) end
   Decorate(entry, true)
   for _, piece in ipairs(FlatPieces(entry)) do
     if Safe(piece:GetAlpha(), 1) > 0 then Hush(piece, true) end
   end
+  if flat then
+    if entry.dcIcon then entry.dcIcon:SetShown(not online) end
+    entry.lookUnit = unit
+    ApplyLook(entry, unit)
+    local state = "flat:" .. guid .. ":" .. tostring(UnitIsDead(unit) and true or false)
+    if entry.state == state and not force then return end
+    entry.state = state
+    ShowFlat(entry, unit)
+    entry.holder:Show()
+    entry.border:Show()
+    ApplyRingCut(entry)
+    Layout(entry)
+    for _, piece in ipairs(FlatPieces(entry)) do Hush(piece, true); Cover2D(entry, piece, true) end
+    return
+  end
   if not use3D then
     local state = "empty:" .. (guid or "?") .. ":" .. tostring(online)
     if entry.state == state and not force then return end
     entry.state = state
     entry.model:Hide()
+    if entry.flat then entry.flat:Hide() end
     if entry.dcIcon then entry.dcIcon:SetShown(not online) end
     entry.holder:Show()
     entry.border:Show()
@@ -1262,20 +1318,24 @@ local function Refresh(entry, force)
   local state = guid .. ":" .. tostring(UnitIsDead(unit) and true or false)
   if entry.state == state and not force then return end
   entry.state = state
-  entry.model:Show()
   entry.holder:Show()
   entry.border:Show()
   ApplyRingCut(entry)
   Layout(entry)
   if not visible then
-    -- out of sight: keep the model already loaded for this unit (it cannot be reloaded)
+    -- out of sight: keep the model already loaded for this unit (it cannot be
+    -- reloaded), or the flat portrait if it got that
     for _, piece in ipairs(FlatPieces(entry)) do Hush(piece, true); Cover2D(entry, piece, true) end
     return
   end
   local model = entry.model
+  if entry.flat then entry.flat:Hide() end
+  model:Show()
   model:ClearModel()
   ApplyCamera(entry) -- before SetUnit, the way other portrait addons do it
-  model:SetUnit(unit)
+  local ok, loaded = pcall(model.SetUnit, model, unit)
+  -- refused after all (newer clients say so): the flat portrait in its place
+  if not ok or Safe(loaded, true) == false then ShowFlat(entry, unit) end
   entry.modelGUID = guid
   ApplyCamera(entry)
   ApplyLook(entry, unit)

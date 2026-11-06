@@ -10,6 +10,7 @@ Portraits3D is a World of Warcraft addon that replaces the flat portraits on the
 - Background: black, gradient, class-colour gradient or transparent, with gradient height and opacity.
 - Animation: all idles, basic idle only, or none.
 - Dead units appear as a see-through black-and-white ghost; offline players in black and white with a disconnect bolt. A player the game cannot build a model for (out of sight since a `/reload`) gets a grey gradient instead, plus the bolt if offline.
+- In dungeons and raids the game lets no addon load a 3D model of a unit outside the group (its identity is secret there); those units get the game's own flat portrait inside the frame instead.
 - Optional Zzz in rested areas, and options to hide the combat text and the crossed-swords combat icon on the player and pet frames.
 - Per-frame on/off switches, a movable options window and an optional minimap button (off by default; turn it on in the options or with `/p3d minimap`).
 - `/p3d off` gives Blizzard's frames back exactly as they were, the hidden combat text and icon included.
