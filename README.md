@@ -35,7 +35,7 @@ For troubleshooting (`/p3d dev` lists them all):
 | --- | --- |
 | `/p3d dev testparty` | shows the party frames with your model while solo |
 | `/p3d dev vehicle` | opens a preview of the player and target vehicle frames with the custom frame (built from the addon's own frames; the game's are not touched) |
-| `/p3d dev debug` | lists the portrait and ring the addon found in each unit frame |
+| `/p3d dev debug` | lists the portrait and ring the addon found in each unit frame, and what each frame shows (its state, what the last model load answered, whether the model or the flat portrait is shown) |
 | `/p3d dev dump <unit>` | lists the named pieces inside a unit frame |
 | `/p3d dev ring <unit>` | shows what the custom frame measured for that frame's ring |
 | `/p3d dev shown <unit>` | lists Blizzard's pictures still drawn around the portrait |
@@ -45,6 +45,10 @@ For troubleshooting (`/p3d dev` lists them all):
 - Model frames cannot be masked to a shape, so the model sits in a square clipping frame and the addon draws its own border over it.
 - The frames find Blizzard's ring from the part of the game's unit frame picture each frame shows; the ring positions were measured from that picture (see `RINGS` in `Portraits3D.lua`). Other UI addons that restyle the unit frames will not line up.
 - `tools/make_blend_frame.py`, `tools/make_frame.py` and `tools/make_bolt.py` (need numpy) redraw the textures in `Textures/`. The game keeps a texture it has loaded until it restarts, so when one changes, save it under a new name.
+
+## Changes
+
+See `CHANGELOG.md`.
 
 ## License
 
