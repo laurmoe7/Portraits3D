@@ -923,7 +923,14 @@ local function Setup(entry)
   model:SetScript("OnModelLoaded", function()
     ApplyCamera(entry)
     if entry.lookUnit then ApplyLook(entry, entry.lookUnit) end -- loading resets the colour
-    if entry.flat then entry.flat:Hide() end -- a model did come: it covers the flat portrait
+    -- a model did come: it covers the flat portrait (not on an empty load, where the
+    -- frame reports no model file; a secret file is taken as a model)
+    if entry.flat and entry.flat:IsShown() then
+      local ok, file = pcall(model.GetModelFileID, model)
+      if not model.GetModelFileID or not ok or IsSecret(file) or (type(file) == "number" and file > 0) then
+        entry.flat:Hide()
+      end
+    end
   end)
   -- The game's flat portrait, round like Blizzard's, under the model for a unit the
   -- model frame does not load (in a dungeon or raid, every unit outside the group:
@@ -1311,13 +1318,14 @@ local function Refresh(entry, force)
   model:ClearModel()
   ApplyCamera(entry) -- before SetUnit, the way other portrait addons do it
   -- Newer clients refuse a unit whose identity is kept secret from addons (in a
-  -- dungeon or raid, every unit outside the group) and say so with a false result;
-  -- the game's flat portrait then shows under the empty model. (The model is not
-  -- hidden on that: a pet's load has answered false and still come a moment later.)
+  -- dungeon or raid, every unit outside the group): the call answers false, or
+  -- nothing, or raises an error. On anything but a true answer the game's flat
+  -- portrait shows under the model, which covers it should a model come after all
+  -- (a pet's load has answered false and still come a moment later).
   local ok, loaded = pcall(model.SetUnit, model, unit)
   entry.loadResult = ok and tostring(Safe(loaded, "secret")) or "error: " .. tostring(loaded)
   entry.loadedAt = GetTime()
-  if not ok or Safe(loaded, true) == false then ShowFlat(entry, unit) end
+  if not ok or Safe(loaded, true) ~= true then ShowFlat(entry, unit) end
   entry.modelGUID = guid
   ApplyCamera(entry)
   ApplyLook(entry, unit)
