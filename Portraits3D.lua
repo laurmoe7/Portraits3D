@@ -1316,6 +1316,7 @@ local function Refresh(entry, force)
   -- hidden on that: a pet's load has answered false and still come a moment later.)
   local ok, loaded = pcall(model.SetUnit, model, unit)
   entry.loadResult = ok and tostring(Safe(loaded, "secret")) or "error: " .. tostring(loaded)
+  entry.loadedAt = GetTime()
   if not ok or Safe(loaded, true) == false then ShowFlat(entry, unit) end
   entry.modelGUID = guid
   ApplyCamera(entry)
@@ -1474,12 +1475,17 @@ end
 
 -- The unit's looks changed. A frame showing the flat portrait only takes the new
 -- picture: reloading the model there asked for the portrait again, which raised
--- the same event again, and so on every frame (the game stuttered).
+-- the same event again, and so on every frame (the game stuttered). A portrait
+-- update right after a load (the game raises one for each new target) does not
+-- load the model a second time either; a model change always does.
+local RELOAD_GRACE = 1 -- seconds after a load in which a portrait update is only a refresh
 local function LooksChanged(unit, modelChanged)
   for _, entry in ipairs(ENTRIES) do
     if entry.unit == unit then
       if not modelChanged and entry.flat and entry.flat:IsShown() and entry.holder and entry.holder:IsShown() then
         ShowFlat(entry, entry.lookUnit or unit)
+      elseif not modelChanged and entry.loadedAt and GetTime() - entry.loadedAt < RELOAD_GRACE then
+        Refresh(entry, false)
       else
         Refresh(entry, true)
       end
