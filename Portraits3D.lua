@@ -923,16 +923,21 @@ local function Setup(entry)
   model:SetScript("OnModelLoaded", function()
     ApplyCamera(entry)
     if entry.lookUnit then ApplyLook(entry, entry.lookUnit) end -- loading resets the colour
+    if entry.flat then entry.flat:Hide() end -- a model did come: it covers the flat portrait
   end)
-  -- The game's flat portrait, round like Blizzard's, for a unit the model frame may
-  -- not load (in a dungeon or raid, every unit outside the group: see Refresh).
+  -- The game's flat portrait, round like Blizzard's, under the model for a unit the
+  -- model frame does not load (in a dungeon or raid, every unit outside the group:
+  -- see Refresh). A texture of the clipping frame, so the model draws over it.
   local flat = clip:CreateTexture(nil, "ARTWORK")
   flat:SetPoint("CENTER", clip, "CENTER")
   flat:SetSize(1, 1) -- sized by Layout
   flat:Hide()
   local flatMask = clip:CreateMaskTexture()
   flatMask:SetAllPoints(flat)
-  flatMask:SetTexture("Interface/CharacterFrame/TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+  -- the round mask Blizzard's pet and target portraits use; the file where there is no atlas
+  if not (C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("CircleMask") and pcall(flatMask.SetAtlas, flatMask, "CircleMask")) then
+    flatMask:SetTexture("Interface/CharacterFrame/TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+  end
   flat:AddMaskTexture(flatMask)
   entry.flat = flat
   -- the disconnect bolt (Blizzard's own is hidden on the party frames), in a frame
@@ -1229,20 +1234,10 @@ function ApplyLook(entry, unit)
   end
 end
 
--- Whether the model frame may load this unit. Newer clients refuse a unit whose
--- identity is kept secret from addons: in a dungeon or raid, every unit outside
--- the group (SetUnit requires a "declassified" unit identity; CanSetUnit tells).
-local function CanLoad(entry, unit)
-  local model = entry.model
-  if not model.CanSetUnit then return true end
-  local ok, can = pcall(model.CanSetUnit, model, unit)
-  return not ok or Safe(can, true) ~= false
-end
-
--- Shows the game's flat portrait of the unit in the square, in the model's place.
+-- Shows the game's flat portrait of the unit in the square, under the model (which
+-- stays: should a model come after all, it covers the picture).
 local function ShowFlat(entry, unit)
   if not entry.flat then return end
-  entry.model:Hide()
   pcall(SetPortraitTexture, entry.flat, unit)
   entry.flat:Show()
 end
@@ -1265,10 +1260,7 @@ local function Refresh(entry, force)
   if exists and guid == nil then guid = "secret:" .. (entry.gen or 0) end
   local cached = guid ~= nil and entry.modelGUID == guid
   local online = exists and UnitIsConnected(unit) and true or false
-  -- A unit in sight that the model frame may not load (a mob in a dungeon, whose
-  -- identity is secret) gets the game's flat portrait in the square instead.
-  local flat = visible and not CanLoad(entry, unit)
-  local use3D = (visible and not flat) or cached
+  local use3D = visible or cached
   -- (with no model to show, the frame stays, grey)
   if not wanted or not exists then
     Show2D(entry)
@@ -1276,27 +1268,12 @@ local function Refresh(entry, force)
   end
   -- (before Decorate, which draws the background) no model, or a dead unit's: the
   -- grey-to-transparent background, which the see-through ghost shows through
-  entry.empty = (not use3D and not flat) or IsDead(unit)
+  entry.empty = not use3D or IsDead(unit)
   GreyBar(entry, not online)
   for _, bolt in ipairs(BlizzBolts(entry)) do Hush(bolt, true) end
   Decorate(entry, true)
   for _, piece in ipairs(FlatPieces(entry)) do
     if Safe(piece:GetAlpha(), 1) > 0 then Hush(piece, true) end
-  end
-  if flat then
-    if entry.dcIcon then entry.dcIcon:SetShown(not online) end
-    entry.lookUnit = unit
-    ApplyLook(entry, unit)
-    local state = "flat:" .. guid .. ":" .. tostring(UnitIsDead(unit) and true or false)
-    if entry.state == state and not force then return end
-    entry.state = state
-    ShowFlat(entry, unit)
-    entry.holder:Show()
-    entry.border:Show()
-    ApplyRingCut(entry)
-    Layout(entry)
-    for _, piece in ipairs(FlatPieces(entry)) do Hush(piece, true); Cover2D(entry, piece, true) end
-    return
   end
   if not use3D then
     local state = "empty:" .. (guid or "?") .. ":" .. tostring(online)
@@ -1333,8 +1310,12 @@ local function Refresh(entry, force)
   model:Show()
   model:ClearModel()
   ApplyCamera(entry) -- before SetUnit, the way other portrait addons do it
+  -- Newer clients refuse a unit whose identity is kept secret from addons (in a
+  -- dungeon or raid, every unit outside the group) and say so with a false result;
+  -- the game's flat portrait then shows under the empty model. (The model is not
+  -- hidden on that: a pet's load has answered false and still come a moment later.)
   local ok, loaded = pcall(model.SetUnit, model, unit)
-  -- refused after all (newer clients say so): the flat portrait in its place
+  entry.loadResult = ok and tostring(Safe(loaded, "secret")) or "error: " .. tostring(loaded)
   if not ok or Safe(loaded, true) == false then ShowFlat(entry, unit) end
   entry.modelGUID = guid
   ApplyCamera(entry)
@@ -2273,6 +2254,10 @@ local function Debug()
   for _, entry in ipairs(ENTRIES) do
     local portrait, path = FindPortrait(entry)
     Say(string.format("%-12s %s", entry.unit, portrait and ("portrait at " .. path .. (entry.holder and ", 3D set up" or "")) or "no portrait found"))
+    if entry.holder then
+      Say(string.format("   state=%s  last SetUnit said %s  model shown=%s  flat portrait shown=%s", tostring(entry.state),
+        tostring(entry.loadResult), tostring(entry.model:IsShown()), tostring(entry.flat and entry.flat:IsShown())))
+    end
     if entry.portrait then
       local dx, dy, radius = RingGeometry(entry)
       Say(radius and string.format("   ring found: offset %.1f, %.1f  radius %.1f  (portrait %.1f wide)", dx, dy, radius, entry.portrait:GetWidth() or 0)
