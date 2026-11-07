@@ -1472,6 +1472,21 @@ local function RefreshUnit(unit, force)
   end
 end
 
+-- The unit's looks changed. A frame showing the flat portrait only takes the new
+-- picture: reloading the model there asked for the portrait again, which raised
+-- the same event again, and so on every frame (the game stuttered).
+local function LooksChanged(unit, modelChanged)
+  for _, entry in ipairs(ENTRIES) do
+    if entry.unit == unit then
+      if not modelChanged and entry.flat and entry.flat:IsShown() and entry.holder and entry.holder:IsShown() then
+        ShowFlat(entry, entry.lookUnit or unit)
+      else
+        Refresh(entry, true)
+      end
+    end
+  end
+end
+
 -- Counts a change of unit on the given frames ("party" for party 1-4, "all" for
 -- every frame), for units whose GUID the game keeps secret (see Refresh).
 local function UnitChanged(...)
@@ -2588,11 +2603,11 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     C_Timer.NewTicker(1, function() RefreshAll(false) end)
     WatchScale()
   elseif event == "UNIT_PORTRAIT_UPDATE" or event == "UNIT_MODEL_CHANGED" then
-    RefreshUnit(arg1, true)
+    LooksChanged(arg1, event == "UNIT_MODEL_CHANGED")
     -- target of target gets no event of its own; reload it when its unit changes looks
     -- (in instances the game keeps whether two units are the same secret: reload then too)
     if arg1 and UnitIsUnit and UnitExists("targettarget") and Safe(UnitIsUnit(arg1, "targettarget"), true) then
-      RefreshUnit("targettarget", true)
+      LooksChanged("targettarget", event == "UNIT_MODEL_CHANGED")
     end
   elseif event == "UNIT_TARGET" then
     if arg1 == "target" then UnitChanged("targettarget") end
