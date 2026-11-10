@@ -26,7 +26,7 @@ local FRAME_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RoundedFrameBlend9"
 -- edge line (right against the ring) and the joints of the bar lines are kept
 local RING_HOLE_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RingHoleCut"
 local HOLE = 0.85 -- hole width of RoundedFrameBlend
-local FLAT_FIT = 0.94 -- the flat portrait's size as a fraction of the model's square
+local FLAT_CROP = 0.06 -- trimmed off each side of the flat portrait, which fills the square
 -- a soft shadow under the frame, like the game's frame parts have; the frame fills
 -- SHADOW_RATIO of the picture, which is drawn SHADOW_DROP lower than the frame
 local SHADOW_TEXTURE = "Interface/AddOns/Portraits3D/Textures/FrameShadow"
@@ -849,9 +849,8 @@ local function Layout(entry)
   entry.model:ClearAllPoints()
   entry.model:SetPoint("CENTER", clip, "CENTER")
   entry.model:SetSize(s, s)
-  -- the flat portrait a little inside the square (whatever the Model size), so its
-  -- round edge shows
-  if entry.flat then entry.flat:SetSize(size * HOLE * FLAT_FIT, size * HOLE * FLAT_FIT) end
+  -- the flat portrait fills the square (whatever the Model size)
+  if entry.flat then entry.flat:SetSize(size * HOLE, size * HOLE) end
   -- about as big in the frame as Blizzard's bolt is on the party frames
   if entry.dcIcon then entry.dcIcon:SetSize(size * 0.7, size * 0.7) end
   if entry.badge then
@@ -959,20 +958,14 @@ local function Setup(entry)
       end
     end
   end)
-  -- The game's flat portrait, round like Blizzard's, under the model for a unit the
-  -- model frame does not load (in a dungeon or raid, every unit outside the group:
-  -- see Refresh). A texture of the clipping frame, so the model draws over it.
+  -- The game's flat portrait, under the model for a unit the model frame does not
+  -- load (in a dungeon or raid, every unit outside the group: see Refresh). A
+  -- texture of the clipping frame, so the model draws over it. Square and filling
+  -- the frame: the round one showed its dark backdrop as a disc on the gradient.
   local flat = clip:CreateTexture(nil, "ARTWORK")
   flat:SetPoint("CENTER", clip, "CENTER")
   flat:SetSize(1, 1) -- sized by Layout
   flat:Hide()
-  local flatMask = clip:CreateMaskTexture()
-  flatMask:SetAllPoints(flat)
-  -- the round mask Blizzard's pet and target portraits use; the file where there is no atlas
-  if not (C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("CircleMask") and pcall(flatMask.SetAtlas, flatMask, "CircleMask")) then
-    flatMask:SetTexture("Interface/CharacterFrame/TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-  end
-  flat:AddMaskTexture(flatMask)
   entry.flat = flat
   -- the disconnect bolt (Blizzard's own is hidden on the party frames), in a frame
   -- of its own above the model so it stays on top of a see-through one
@@ -1272,7 +1265,9 @@ end
 -- stays: should a model come after all, it covers the picture).
 local function ShowFlat(entry, unit)
   if not entry.flat then return end
-  pcall(SetPortraitTexture, entry.flat, unit)
+  -- (true: the whole square picture, without the game's round cut-out)
+  pcall(SetPortraitTexture, entry.flat, unit, true)
+  entry.flat:SetTexCoord(FLAT_CROP, 1 - FLAT_CROP, FLAT_CROP, 1 - FLAT_CROP) -- setting the picture can reset it
   entry.flat:Show()
 end
 

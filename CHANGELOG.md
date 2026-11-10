@@ -2,7 +2,7 @@
 
 ## 0.2 (2026-11-07)
 
-- Dungeons and raids: units outside the group (whose identity the game keeps secret from addons) cannot be loaded as a 3D model there. They now get the game's own flat portrait inside the custom frame, greyed and faded like the model for dead and offline units, instead of an empty frame.
+- Dungeons and raids: units outside the group (whose identity the game keeps secret from addons) cannot be loaded as a 3D model there. They now get the game's own flat portrait, square and filling the custom frame, greyed and faded like the model for dead and offline units, instead of an empty frame.
 - The flat portrait sits under the model and is replaced by the model when one loads after all (a pet's load can answer "no" and still come a moment later).
 - A frame showing the flat portrait only takes the new picture on a portrait update, which stops a reload loop that stuttered the game.
 - Each new target loads its model once: the portrait update the game raises right after a target change no longer loads it a second time.
