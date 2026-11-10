@@ -477,6 +477,34 @@ local function CheckLoaded(ok, file)
   end
 end
 
+-- the classic con colours: the client's GetCreatureDifficultyColor uses the modern
+-- rules, whose green band is only a few levels wide
+local DIFFICULTY = {
+  red = { r = 1, g = 0.1, b = 0.1 },
+  orange = { r = 1, g = 0.5, b = 0.25 },
+  yellow = { r = 1, g = 0.82, b = 0 },
+  green = { r = 0.25, g = 0.75, b = 0.25 },
+  gray = { r = 0.5, g = 0.5, b = 0.5 },
+}
+
+local function ClassicGrayLevel(level)
+  if level <= 5 then return 0 end
+  if level < 40 then return level - math.floor(level / 10) - 5 end
+  if level < 60 then return level - math.floor(level / 5) - 1 end
+  return level - 9
+end
+
+local function ClassicDifficultyColor(level)
+  local mine = Safe(UnitLevel("player"), 0)
+  if not (mine and mine > 0) then return nil end
+  local diff = level - mine
+  if diff >= 5 then return DIFFICULTY.red end
+  if diff >= 3 then return DIFFICULTY.orange end
+  if diff >= -2 then return DIFFICULTY.yellow end
+  if level > ClassicGrayLevel(mine) then return DIFFICULTY.green end
+  return DIFFICULTY.gray
+end
+
 local function Decorate(entry, active)
   for _, path in ipairs(entry.level or {}) do
     local obj = Resolve(path)
@@ -631,8 +659,7 @@ local function Decorate(entry, active)
       if entry.unit == "player" then
         r, g, b = 1, 1, 1
       elseif UnitCanAttack and UnitCanAttack("player", entry.unit) then
-        local difficulty = GetCreatureDifficultyColor or GetQuestDifficultyColor
-        local c = (n and n > 0) and difficulty and difficulty(n)
+        local c = (n and n > 0) and ClassicDifficultyColor(n)
         if c then r, g, b = c.r, c.g, c.b elseif not (n and n > 0) then r, g, b = 1, 0.1, 0.1 end
       end
       entry.badgeText:SetTextColor(r, g, b)
