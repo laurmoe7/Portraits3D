@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Options moved into the game's Settings panel (Options > AddOns > Portraits 3D: Forever Frames), styled like funFX: a General page and sub-pages for Look, Camera, Combo points and Tracked buffs, with the panel's own sliders and drop-down boxes, a tooltip on every option and the panel's Defaults button resetting the open page. A game without the Settings panel gets the same pages in a window with tabs.
+- Combo points on the target's nameplate, on the top edge of its health bar and drawn above the cast bar, in Blizzard's modern round points or the classic red gems, with size and position settings (`/p3d combo`).
+- Sliders to move the game's own combo points on the target frame (`/p3d combo frame move <x> <y>`, `/p3d dev combo`).
+- Tracked buffs under the player frame (Slice and Dice, Adrenaline Rush, Blade Flurry, Evasion, Sprint, Cold Blood, Tiger's Fury, Dash, or any you add), styled like Blizzard's aura buttons, wrapping to a new line like the target frame's auras, with a preview for placing them (`/p3d buffs`). The game hides buffs from addons in combat, so there your own casts start the timers, from the length each buff had when last seen (Slice and Dice by combo points spent); `/p3d dev buffs` shows what the addon can read.
+
 ## 0.2 (2026-11-07)
 
 - Dungeons and raids: units outside the group (whose identity the game keeps secret from addons) cannot be loaded as a 3D model there. They now get the game's own flat portrait, square and filling the custom frame, greyed and faded like the model for dead and offline units, instead of an empty frame.

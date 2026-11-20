@@ -1,4 +1,4 @@
-local addonName = ...
+local addonName, ns = ...
 
 -- Replaces the flat portrait on Blizzard's unit frames with a 3D model in a frame
 -- of our own: a rounded square drawn where Blizzard's round portrait ring is (the
@@ -11,7 +11,12 @@ local DEFAULTS = { enabled = true, zoom = 1, petZoom = 1,
   turn = 0, targetTurn = 0, partyTurn = 0, petTurn = 0, universal = false,
   -- the model's size inside the frame
   size = 1, targetSize = 1, partySize = 1, petSize = 1,
-  offX = 0, offY = 0, targetOffX = 0, targetOffY = 0, partyOffX = 0, partyOffY = 0, petOffX = 0, petOffY = 0 }
+  offX = 0, offY = 0, targetOffX = 0, targetOffY = 0, partyOffX = 0, partyOffY = 0, petOffX = 0, petOffY = 0,
+  -- combo points on the target's nameplate (NameplateCombo.lua)
+  plateCombo = true, plateComboStyle = "modern", plateComboScale = 1, plateComboX = 0, plateComboY = 0,
+  frameComboX = 0, frameComboY = 0, -- moves the game's own combo points on the target frame
+  -- the row of tracked buffs under the player frame (TrackedBuffs.lua)
+  trackBuffs = true, buffSize = 24, buffX = 0, buffY = 0 }
 
 local GLOW_TEXTURE = "Interface/AddOns/Portraits3D/Textures/RoundedGlow"
 local GLOW_RATIO = 0.80 -- how much of the glow picture the framed square fills
@@ -1538,8 +1543,6 @@ end
 
 local function Say(msg) print("|cff66ccffPortraits3D|r " .. msg) end
 
-local win -- the movable options window; win.refresh re-reads the saved values
-
 local function SetNumber(key, n)
   DB[key] = n
   for _, entry in ipairs(ENTRIES) do
@@ -1721,428 +1724,844 @@ local function ToggleBorderTest()
   Refresh()
 end
 
-local COLUMN = 322 -- distance between the two columns of the window
 local SetMinimapHidden = function() end -- replaced below, once the minimap button exists
 
--- Which set of size / camera / position settings the window edits.
+-- Which set of size / camera / position settings the Camera page edits.
 local SIZE_GROUPS = {
   { key = "player", label = "Player", prefix = "", covers = "Player" },
-  { key = "target", label = "Target", prefix = "target", covers = "Target, target of target and focus" },
+  { key = "target", label = "Target, target of target and focus", prefix = "target", covers = "Target, target of target and focus" },
   { key = "party", label = "Party", prefix = "party", covers = "Party members 1-4" },
   { key = "pet", label = "Pet", prefix = "pet", covers = "Pet" },
 }
 
-local function BuildWindow()
-  local ok, f = pcall(CreateFrame, "Frame", "Portraits3DOptions", UIParent, "BackdropTemplate")
-  if not ok then f = CreateFrame("Frame", "Portraits3DOptions", UIParent) end
-  f:SetSize(660, 612)
-  f:SetPoint("CENTER", UIParent, "CENTER", 200, 0) -- out of the way of the unit frames
-  f:SetFrameStrata("DIALOG")
-  f:SetClampedToScreen(true)
-  f:SetMovable(true)
-  f:EnableMouse(true)
-  f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving)
-  f:SetScript("OnDragStop", f.StopMovingOrSizing)
-  if f.SetBackdrop then
-    f:SetBackdrop({
-      bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-      edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-      tile = true, tileSize = 32, edgeSize = 32,
-      insets = { left = 8, right = 8, top = 8, bottom = 8 },
-    })
-  end
-  tinsert(UISpecialFrames, "Portraits3DOptions") -- Escape closes it
-
-  -- A vertical shade on a texture, from `bottom` to `top` alpha (flat if the game
-  -- has no gradients).
-  local function Shade(tex, r, g, b, bottom, top)
-    tex:SetColorTexture(1, 1, 1, 1)
-    local done = CreateColor and pcall(tex.SetGradient, tex, "VERTICAL", CreateColor(r, g, b, bottom), CreateColor(r, g, b, top))
-    if not done and not pcall(tex.SetGradientAlpha, tex, "VERTICAL", r, g, b, bottom, r, g, b, top) then
-      tex:SetColorTexture(r, g, b, (bottom + top) / 2)
-    end
-  end
-
-  -- Header: the addon's icon, its name and version, and a gold line under them.
-  local icon = f:CreateTexture(nil, "ARTWORK")
-  icon:SetTexture("Interface/Icons/Achievement_Character_Human_Female")
-  icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-  icon:SetSize(32, 32)
-  icon:SetPoint("TOPLEFT", 22, -18)
-  local iconEdge = f:CreateTexture(nil, "BORDER")
-  iconEdge:SetColorTexture(1, 0.82, 0, 0.6)
-  iconEdge:SetPoint("TOPLEFT", icon, "TOPLEFT", -1, 1)
-  iconEdge:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 1, -1)
-  local title = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-  title:SetPoint("TOPLEFT", icon, "TOPRIGHT", 10, -1)
-  title:SetText("Portraits 3D: Forever Frames")
-  local getMeta = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
-  local version = getMeta and getMeta(addonName, "Version")
-  local sub = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-  sub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -3)
-  sub:SetTextColor(0.65, 0.65, 0.65)
-  sub:SetText((version and ("Version " .. version .. "   -   ") or "") .. "/p3d opens this window")
-  local rule = f:CreateTexture(nil, "ARTWORK")
-  rule:SetPoint("TOPLEFT", 16, -60)
-  rule:SetPoint("TOPRIGHT", -16, -60)
-  rule:SetHeight(1)
-  rule:SetColorTexture(1, 0.82, 0, 0.45)
-  local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-  close:SetPoint("TOPRIGHT", -6, -6)
-
-  local controls = {}
-  local colX = 0 -- x offset of the column being built
+-- ===== Options =====
+-- The options live in the game's own Settings panel (Options > AddOns > Portraits 3D),
+-- with a sub-page each, in the style of funFX:
+--   General | Look | Camera | Combo points | Tracked buffs
+-- If a game version has no Settings panel, the same pages open in a window with tabs.
+local ToggleWindow, RefreshOptions, BuildOptions
+do
+  local PAGE_WIDTH = 620
+  local CATEGORY_TITLE = "Portraits 3D: Forever Frames"
   local DIM = 0.45 -- how bright a control is drawn while it does nothing
+  local BRONZE = { 0.55, 0.45, 0.2 }
+  local pages = {} -- the page definitions, in order (filled in further down)
+  local pageById = {}
+  local refreshers = {} -- each re-reads the saved values into one control
+  local built, usingSettings, mainCategory, standalone, pendingPage
 
-  -- A softly shaded card with a gold bar on its left edge, a heading and a faint
-  -- line running on from the heading.
-  local function AddSection(label, top, height)
-    local card = f:CreateTexture(nil, "BACKGROUND", nil, 1)
-    card:SetPoint("TOPLEFT", 16 + colX, top)
-    card:SetSize(298, height)
-    Shade(card, 1, 1, 1, 0.025, 0.075)
-    local edge = f:CreateTexture(nil, "BACKGROUND", nil, 2)
-    edge:SetColorTexture(1, 1, 1, 0.1)
-    edge:SetPoint("TOPLEFT", card, "TOPLEFT")
-    edge:SetPoint("TOPRIGHT", card, "TOPRIGHT")
-    edge:SetHeight(1)
-    local bar = f:CreateTexture(nil, "BACKGROUND", nil, 3)
-    bar:SetPoint("TOPLEFT", card, "TOPLEFT")
-    bar:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT")
-    bar:SetWidth(2)
-    Shade(bar, 1, 0.82, 0, 0.25, 0.9)
-    local text = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    text:SetPoint("TOPLEFT", card, "TOPLEFT", 12, -7)
-    text:SetText(label)
-    local line = f:CreateTexture(nil, "ARTWORK")
-    line:SetPoint("LEFT", text, "RIGHT", 8, 0)
-    line:SetPoint("RIGHT", card, "RIGHT", -12, 0)
-    line:SetHeight(1)
-    line:SetColorTexture(1, 0.82, 0, 0.2)
+  RefreshOptions = function()
+    for _, fn in ipairs(refreshers) do fn() end
   end
 
-  -- A check box with its label (the label can be clicked too). tip (optional) is
-  -- shown on hover; enabledIf (optional) greys it out while it returns false.
-  local function AddCheck(label, x, y, get, set, tip, enabledIf)
-    local box = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
-    box:SetSize(24, 24)
-    box:SetPoint("TOPLEFT", x + colX, y)
-    local text = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    text:SetPoint("LEFT", box, "RIGHT", 2, 0)
-    text:SetText(label)
-    box:SetHitRectInsets(0, -((text:GetStringWidth() or 100) + 6), 0, 0)
-    -- a greyed-out box still shows its tip, which says why
-    if box.SetMotionScriptsWhileDisabled then box:SetMotionScriptsWhileDisabled(true) end
-    box:SetScript("OnClick", function(self) set(self:GetChecked() and true or false) end)
-    if tip then
-      box:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(label)
-        GameTooltip:AddLine(tip, 1, 1, 1, true)
-        GameTooltip:Show()
-      end)
-      box:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    end
-    controls[#controls + 1] = function()
-      box:SetChecked(get())
-      local on = not enabledIf or enabledIf()
-      box:SetEnabled(on)
-      if on then text:SetTextColor(1, 1, 1) else text:SetTextColor(DIM, DIM, DIM) end
-    end
+  local function InCombat() return InCombatLockdown and InCombatLockdown() and true or false end
+
+  -- Escape closes the stand-alone window. It listens for Escape itself while shown
+  -- instead of joining the game's UISpecialFrames list (writing into that Blizzard
+  -- table can taint the game's own Escape handling).
+  local function EscapeCloses(f)
+    f:EnableKeyboard(true)
+    if not InCombat() then f:SetPropagateKeyboardInput(true) end
+    f:SetScript("OnKeyDown", function(self, key)
+      if InCombat() then
+        if key == "ESCAPE" then self:Hide() end
+      elseif key == "ESCAPE" then
+        self:SetPropagateKeyboardInput(false)
+        self:Hide()
+      else
+        self:SetPropagateKeyboardInput(true)
+      end
+    end)
   end
 
-  -- A slider on a saved number. key is the setting's name, or a function that
-  -- returns it (the camera card edits a different setting per frame group).
-  -- Right-click puts it back to its default; enabledIf (optional) greys it out.
-  local function AddSlider(key, label, lo, hi, y, step, enabledIf)
-    local function Key() return type(key) == "function" and key() or key end
-    local fmt = step >= 1 and "%d°" or "%.2f" -- whole numbers are degrees
-    local text = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    text:SetPoint("TOPLEFT", 30 + colX, y)
-    text:SetText(label)
-    local value = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    value:SetPoint("TOPLEFT", 30 + colX, y)
-    value:SetWidth(262)
-    value:SetJustifyH("RIGHT")
-    local slider = CreateFrame("Slider", nil, f, "OptionsSliderTemplate")
-    slider:SetSize(262, 16)
-    slider:SetPoint("TOPLEFT", 30 + colX, y - 18)
+  -- A plain dark button with a thin grey edge and white text, like the game's own
+  -- settings buttons; disabled (the page you are on) it shows its text in gold.
+  local function DarkButton(parent, width, height)
+    local button = CreateFrame("Button", nil, parent)
+    button:SetSize(width, height)
+    local edge = button:CreateTexture(nil, "BACKGROUND")
+    edge:SetAllPoints(button)
+    edge:SetColorTexture(0.40, 0.40, 0.40, 1)
+    local fill = button:CreateTexture(nil, "BORDER")
+    fill:SetPoint("TOPLEFT", 1, -1)
+    fill:SetPoint("BOTTOMRIGHT", -1, 1)
+    fill:SetColorTexture(0.05, 0.05, 0.05, 1)
+    pcall(function()
+      fill:SetGradient("VERTICAL", CreateColor(0.02, 0.02, 0.02, 1), CreateColor(0.11, 0.11, 0.11, 1))
+    end)
+    local shine = button:CreateTexture(nil, "ARTWORK")
+    shine:SetPoint("TOPLEFT", 2, -2)
+    shine:SetPoint("TOPRIGHT", -2, -2)
+    shine:SetHeight(1)
+    shine:SetColorTexture(1, 1, 1, 0.10)
+    local hover = button:CreateTexture(nil, "HIGHLIGHT")
+    hover:SetPoint("TOPLEFT", 1, -1)
+    hover:SetPoint("BOTTOMRIGHT", -1, 1)
+    hover:SetColorTexture(1, 1, 1, 0.12)
+    button:SetNormalFontObject("GameFontHighlight")
+    button:SetHighlightFontObject("GameFontHighlight")
+    button:SetDisabledFontObject("GameFontNormal")
+    return button
+  end
+
+  -- An action button that looks exactly like the Settings panel's drop-down boxes: it IS
+  -- the game's drop-down box, without the arrow and without a list, with a gold ring
+  -- while pressed. A game without that box gets DarkButton.
+  local BUTTON_HEIGHT = 26
+  local function ClassicButton(parent, width)
+    local ok, button = pcall(CreateFrame, "DropdownButton", nil, parent, "WowStyle1DropdownTemplate")
+    if not ok or type(button) ~= "table" or not button.OverrideText or not button.SetupMenu then
+      return DarkButton(parent, width, BUTTON_HEIGHT)
+    end
+    if not pcall(button.SetupMenu, button, function() end) then
+      button:Hide()
+      return DarkButton(parent, width, BUTTON_HEIGHT)
+    end
+    button:SetSize(width, BUTTON_HEIGHT)
+    button:SetScript("OnMouseDown", nil)
+    pcall(function()
+      button.Arrow:Hide()
+      button.Text:ClearAllPoints()
+      button.Text:SetPoint("LEFT", button, "LEFT", 6, 0)
+      button.Text:SetPoint("RIGHT", button, "RIGHT", -6, 0)
+      button.Text:SetJustifyH("CENTER")
+    end)
+    pcall(function()
+      local ring = CreateFrame("Frame", nil, button, "BackdropTemplate")
+      ring:SetPoint("TOPLEFT", button, "TOPLEFT", -4, 4)
+      ring:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 4, -4)
+      ring:SetFrameLevel(button:GetFrameLevel() + 3)
+      ring:EnableMouse(false)
+      ring:SetBackdrop({ edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14 })
+      ring:SetBackdropBorderColor(1, 0.82, 0, 1)
+      ring:Hide()
+      button:HookScript("OnMouseDown", function() ring:Show() end)
+      button:HookScript("OnMouseUp", function() C_Timer.After(0.25, function() ring:Hide() end) end)
+      button:HookScript("OnHide", function() ring:Hide() end)
+    end)
+    -- SetText goes through OverrideText (so the box keeps our text); the game's
+    -- OverrideText itself calls SetText, and that inner call must reach the real one.
+    local realSetText = button.SetText
+    local inside = false
+    button.SetText = function(self, text)
+      if inside then return realSetText(self, text) end
+      inside = true
+      local okText = pcall(self.OverrideText, self, text)
+      inside = false
+      if not okText then realSetText(self, text) end
+    end
+    return button
+  end
+
+  -- A scroll frame with the same slim bar as the drop-down lists; older games get the classic bar.
+  local function NewScrollFrame(parent)
+    local ok, scroll = pcall(CreateFrame, "ScrollFrame", nil, parent, "ScrollFrameTemplate")
+    local bar = ok and scroll and scroll.ScrollBar
+    if type(bar) ~= "table" then
+      return CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+    end
+    pcall(function()
+      bar:ClearAllPoints()
+      bar:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 6, -2)
+      bar:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 6, 2)
+    end)
+    return scroll
+  end
+
+  -- A slider in the Settings panel's own style ([<] bar with a diamond [>]) from lo to hi
+  -- in steps of `step`. slider.onChange(value) hears changes; slider.syncing = true around
+  -- SetValue changes it quietly. slider.inner is the part the mouse is over. Older games
+  -- get the classic slider.
+  local function NewSlider(parent, lo, hi, step, width)
+    local steps = math.max(1, math.floor((hi - lo) / step + 0.5))
+    local ok, c = pcall(CreateFrame, "Frame", nil, parent, "MinimalSliderWithSteppersTemplate")
+    local mixin = MinimalSliderWithSteppersMixin
+    if ok and type(c) == "table" and type(c.Slider) == "table" and c.Init and c.RegisterCallback
+        and mixin and type(mixin.Event) == "table" and mixin.Event.OnValueChanged then
+      c.syncing = true
+      local okInit = pcall(c.Init, c, lo, lo, hi, steps, {})
+      c.syncing = false
+      if okInit then
+        pcall(function() c:SetSize(width, 16) end)
+        for _, part in ipairs({ "TopText", "LeftText", "RightText", "MinText", "MaxText" }) do
+          pcall(function() c[part]:Hide() end)
+        end
+        c:RegisterCallback(mixin.Event.OnValueChanged, function(_, value)
+          if not c.syncing and c.onChange then c.onChange(value) end
+        end, c)
+        c.SetValue = function(self, value) self.Slider:SetValue(value) end
+        c.inner = c.Slider
+        return c
+      end
+      c:Hide()
+    end
+    local slider = CreateFrame("Slider", nil, parent, "OptionsSliderTemplate")
+    slider:SetSize(width, 16)
     slider:SetMinMaxValues(lo, hi)
     slider:SetValueStep(step)
     slider:SetObeyStepOnDrag(true)
-    pcall(function() slider.Low:SetText(""); slider.High:SetText(""); slider.Text:Hide() end)
-    slider:SetScript("OnValueChanged", function(self, v)
-      v = math.floor(v / step + 0.5) * step
-      value:SetText(string.format(fmt, v))
-      if self.syncing or math.abs((DB[Key()] or 0) - v) < 1e-6 then return end
-      SetNumber(Key(), v)
+    pcall(function() slider.Low:Hide(); slider.High:Hide(); slider.Text:Hide() end)
+    slider:SetScript("OnValueChanged", function(self, value)
+      if not self.syncing and self.onChange then self.onChange(value) end
     end)
-    slider:SetScript("OnMouseUp", function(_, button)
-      if button == "RightButton" and DEFAULTS[Key()] ~= nil then
-        SetNumber(Key(), DEFAULTS[Key()])
-        f.refresh()
+    slider.inner = slider
+    return slider
+  end
+
+  -- A drop-down box of { key, label } choices in the Settings panel's style; a game
+  -- without it gets a button that steps through the choices. box.refresh() shows the
+  -- current choice.
+  local function NewDropdown(parent, width, list, get, set)
+    local ok, dd = pcall(CreateFrame, "DropdownButton", nil, parent, "WowStyle1DropdownTemplate")
+    if ok and type(dd) == "table" and dd.SetupMenu then
+      dd:SetWidth(width)
+      local okSetup = pcall(dd.SetupMenu, dd, function(_, root)
+        for _, item in ipairs(list) do
+          root:CreateRadio(item.label, function() return get() == item.key end, function() set(item.key) end, item.key)
+        end
+      end)
+      if okSetup then
+        dd.refresh = function() pcall(dd.GenerateMenu, dd) end
+        return dd
       end
+      dd:Hide()
+    end
+    local button = DarkButton(parent, width, 24)
+    button.refresh = function()
+      for _, item in ipairs(list) do
+        if get() == item.key then button:SetText(item.label) end
+      end
+    end
+    button:SetScript("OnClick", function()
+      local index = 1
+      for i, item in ipairs(list) do if get() == item.key then index = i end end
+      set(list[index % #list + 1].key)
     end)
-    slider:SetScript("OnEnter", function(self)
-      GameTooltip:SetOwner(self, "ANCHOR_TOP")
-      GameTooltip:SetText(label)
-      GameTooltip:AddLine("Right-click: back to the default", 1, 1, 1)
+    return button
+  end
+
+  -- Hover help: a gold title and a white line.
+  local function Tip(region, title, text, hook)
+    local function Enter(self)
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      GameTooltip:SetText(title, 1, 0.82, 0)
+      if text then GameTooltip:AddLine(text, 1, 1, 1, true) end
       GameTooltip:Show()
-    end)
-    slider:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    controls[#controls + 1] = function()
-      slider.syncing = true
-      slider:SetValue(DB[Key()] or 0)
-      slider.syncing = false
-      value:SetText(string.format(fmt, DB[Key()] or 0))
-      local on = not enabledIf or enabledIf()
-      slider:EnableMouse(on)
-      slider:SetAlpha(on and 1 or DIM)
-      if on then
-        text:SetTextColor(1, 1, 1)
-        value:SetTextColor(1, 0.82, 0)
-      else
-        text:SetTextColor(DIM, DIM, DIM)
-        value:SetTextColor(DIM, DIM, DIM)
+    end
+    local function Leave() GameTooltip:Hide() end
+    if hook then
+      region:HookScript("OnEnter", Enter)
+      region:HookScript("OnLeave", Leave)
+    else
+      region:SetScript("OnEnter", Enter)
+      region:SetScript("OnLeave", Leave)
+    end
+  end
+
+  -- The page name as the Settings panel list shows it: a small icon, then the title.
+  local function CategoryName(def)
+    if def.icon then return "|TInterface\\Icons\\" .. def.icon .. ":16:16:0:0|t " .. def.title end
+    return def.title
+  end
+
+  -- A page: a big title with a bronze rule under it, and the settings below in a
+  -- scrolling area (funFX's page look).
+  local function NewPage(def)
+    local page = CreateFrame("Frame", nil, UIParent)
+    page:Hide()
+    def.page = page
+    pageById[def.id] = def
+    local font = _G.GameFontHighlightHuge and "GameFontHighlightHuge" or "GameFontNormalLarge"
+    local header = page:CreateFontString(nil, "ARTWORK", font)
+    header:SetPoint("TOPLEFT", 16, -14)
+    header:SetText(def.header or def.title)
+    local rule = page:CreateTexture(nil, "ARTWORK")
+    rule:SetColorTexture(BRONZE[1], BRONZE[2], BRONZE[3], 0.9)
+    rule:SetHeight(1)
+    rule:SetPoint("TOPLEFT", 16, -50)
+    rule:SetPoint("TOPRIGHT", -16, -50)
+    local scroll = NewScrollFrame(page)
+    scroll:SetPoint("TOPLEFT", 0, -58)
+    scroll:SetPoint("BOTTOMRIGHT", -28, 8)
+    local content = CreateFrame("Frame", nil, scroll)
+    content:SetSize(PAGE_WIDTH, 10)
+    scroll:SetScrollChild(content)
+    def.content = content
+    page:SetScript("OnShow", RefreshOptions)
+    if def.onHide then page:SetScript("OnHide", def.onHide) end
+    -- the Settings panel's own "Defaults" button resets the page that is open
+    page.OnDefault = function()
+      if def.reset then def.reset() end
+      RefreshOptions()
+    end
+    page.OnRefresh = RefreshOptions
+    return page
+  end
+
+  -- Lays a page's settings out top to bottom. Every control re-reads its saved value
+  -- whenever any page is shown or a setting changes.
+  local function Builder(def)
+    local content = def.content
+    local b = { y = -8 }
+    local function Watch(fn) refreshers[#refreshers + 1] = fn end
+    local function Changed() RefreshOptions() end
+
+    -- a gold heading with a thin bronze rule under it
+    function b.Heading(text)
+      if b.y < -8 then b.y = b.y - 12 end
+      local title = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+      title:SetPoint("TOPLEFT", 18, b.y)
+      title:SetText(text)
+      local rule = content:CreateTexture(nil, "ARTWORK")
+      rule:SetColorTexture(BRONZE[1], BRONZE[2], BRONZE[3], 0.7)
+      rule:SetSize(584, 1)
+      rule:SetPoint("TOPLEFT", 18, b.y - 18)
+      b.y = b.y - 30
+    end
+
+    -- grey small text across the page
+    function b.Note(text)
+      local note = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+      note:SetPoint("TOPLEFT", 18, b.y)
+      note:SetWidth(584)
+      note:SetJustifyH("LEFT")
+      note:SetTextColor(0.7, 0.7, 0.7)
+      note:SetText(text)
+      b.y = b.y - math.max(14, (note:GetStringHeight() or 14)) - 10
+    end
+
+    -- A check box; col 1 and 2 put two on a line (the line ends after col 2).
+    function b.Check(label, get, set, tip, enabledIf, col)
+      local box = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+      box:SetSize(24, 24)
+      box:SetPoint("TOPLEFT", col == 2 and 314 or 14, b.y)
+      local text = content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+      text:SetPoint("LEFT", box, "RIGHT", 4, 0)
+      text:SetText(label)
+      box:SetHitRectInsets(0, -((text:GetStringWidth() or 100) + 8), 0, 0)
+      if box.SetMotionScriptsWhileDisabled then box:SetMotionScriptsWhileDisabled(true) end
+      box:SetScript("OnClick", function(self) set(self:GetChecked() and true or false); Changed() end)
+      if tip then Tip(box, label, tip) end
+      Watch(function()
+        box:SetChecked(get() and true or false)
+        local on = not enabledIf or enabledIf()
+        box:SetEnabled(on)
+        if on then text:SetTextColor(1, 1, 1) else text:SetTextColor(DIM, DIM, DIM) end
+      end)
+      if col ~= 1 then b.y = b.y - 28 end
+      return box
+    end
+
+    -- check boxes two to a line: { label, get, set, tip, enabledIf }
+    function b.Checks(items)
+      for i, item in ipairs(items) do
+        b.Check(item[1], item[2], item[3], item[4], item[5], i % 2 == 1 and 1 or 2)
       end
+      if #items % 2 == 1 then b.y = b.y - 28 end
     end
-  end
 
-  local function FrameCheck(key, x, y)
-    AddCheck(GROUP_LABEL[key], x, y,
-      function() return DB.frames[key] ~= false end,
-      function(on) DB.frames[key] = on; RefreshAll(true) end)
-  end
-
-  -- Two check boxes per row, for a list of { key, label } choices.
-  local function AddChoices(list, top, current, apply)
-    for i, item in ipairs(list) do
-      AddCheck(item.label, i % 2 == 1 and 28 or 168, top - math.floor((i - 1) / 2) * 22,
-        function() return current() == item.key end,
-        function() apply(item.key); f.refresh() end)
+    -- the label to the left of a slider or drop-down box
+    local function RowLabel(label, y)
+      local text = content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+      text:SetPoint("TOPLEFT", 40, y)
+      text:SetWidth(150)
+      text:SetJustifyH("LEFT")
+      text:SetText(label)
+      return text
     end
-  end
 
-  -- ===== Left column =====
-  AddSection("GENERAL", -72, 58)
-  AddCheck("Minimap button", 28, -98, function() return not DB.hideMinimap end,
-    function(on) SetMinimapHidden(not on) end)
-
-  AddSection("FRAMES", -138, 102)
-  FrameCheck("player", 28, -164)
-  FrameCheck("target", 168, -164)
-  FrameCheck("targettarget", 28, -186)
-  FrameCheck("focus", 168, -186)
-  FrameCheck("party", 28, -208)
-  FrameCheck("pet", 168, -208)
-
-  AddSection("ICONS & EFFECTS", -248, 102)
-  AddCheck("Level badge", 28, -274, function() return DB.showBadge ~= false end,
-    function(on) DB.showBadge = on; RefreshAll(true) end,
-    "The level on a round badge at the frame's corner.")
-  AddCheck("Resting Zzz", 168, -274, function() return DB.showZzz ~= false end,
-    function(on) DB.showZzz = on; RefreshAll(true) end,
-    "The rising Zzz on your portrait in a rested area.")
-  AddCheck("Status glow", 28, -296, function() return DB.showGlow ~= false end,
-    function(on) DB.showGlow = on; RefreshAll(true) end,
-    "A soft pulse around the player and pet frames: gold while resting, red in combat.")
-  AddCheck("Hide combat text", 168, -296, function() return DB.hideCombatText == true end,
-    function(on) DB.hideCombatText = on; RefreshAll(true) end,
-    "Hides the damage and healing numbers that pop up over the player and pet portraits.")
-  AddCheck("Hide combat icon", 28, -318, function() return DB.hideSwords == true end,
-    function(on) DB.hideSwords = on; RefreshAll(true) end,
-    "Hides the crossed swords that show on your portrait during combat.")
-
-  AddSection("BACKGROUND", -358, 166)
-  AddChoices(BACKGROUNDS, -384, function() return DB.background or "black" end, SetBackground)
-  local function IsGradient()
-    local mode = DB.background or "black"
-    return mode == "gradient" or mode == "class"
-  end
-  AddSlider("gradient", "Gradient height", 0.1, 1, -436, 0.05, IsGradient)
-  AddSlider("gradientAlpha", "Gradient opacity", 0.1, 1, -482, 0.05, IsGradient)
-
-  -- ===== Right column =====
-  colX = COLUMN
-  local selected = "player" -- the frame group the size card edits
-  local function Prefix()
-    if DB.universal then return "" end
-    for _, group in ipairs(SIZE_GROUPS) do
-      if group.key == selected then return group.prefix end
+    -- A slider on a saved number. key is the setting's name or a function that returns
+    -- it. apply (optional) runs after a change instead of updating the portraits.
+    -- Right-click: back to the default.
+    function b.Slider(label, key, lo, hi, step, fmt, apply, enabledIf, tip)
+      local function Key() return type(key) == "function" and key() or key end
+      fmt = fmt or (step >= 1 and "%d" or "%.2f")
+      local text = RowLabel(label, b.y - 4)
+      local slider = NewSlider(content, lo, hi, step, 250)
+      slider:SetPoint("TOPLEFT", 200, b.y - 2)
+      local value = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+      value:SetPoint("LEFT", slider, "RIGHT", 14, 0)
+      local function Round(v) return math.floor(v / step + 0.5) * step end
+      local function Set(v)
+        local k = Key()
+        if apply then DB[k] = v; apply() else SetNumber(k, v) end
+      end
+      slider.onChange = function(v)
+        v = Round(v)
+        value:SetText(string.format(fmt, v))
+        if math.abs((DB[Key()] or 0) - v) < 1e-6 then return end
+        Set(v)
+      end
+      slider.inner:HookScript("OnMouseUp", function(_, button)
+        if button == "RightButton" and DEFAULTS[Key()] ~= nil then
+          Set(DEFAULTS[Key()])
+          Changed()
+        end
+      end)
+      Tip(slider.inner, label, (tip and (tip .. "\n") or "") .. "Right-click: back to the default.", true)
+      Watch(function()
+        local v = DB[Key()] or 0
+        slider.syncing = true
+        slider:SetValue(v)
+        slider.syncing = false
+        value:SetText(string.format(fmt, v))
+        local on = not enabledIf or enabledIf()
+        if slider.SetEnabled then pcall(slider.SetEnabled, slider, on) end
+        slider.inner:EnableMouse(on)
+        slider:SetAlpha(on and 1 or DIM)
+        if on then
+          text:SetTextColor(1, 1, 1)
+          value:SetTextColor(1, 0.82, 0)
+        else
+          text:SetTextColor(DIM, DIM, DIM)
+          value:SetTextColor(DIM, DIM, DIM)
+        end
+      end)
+      b.y = b.y - 32
     end
-    return ""
-  end
-  local function K(name)
-    local prefix = Prefix()
-    return prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))
+
+    -- A drop-down box of { key, label } choices.
+    function b.Choice(label, list, get, set, enabledIf, tip)
+      local text = RowLabel(label, b.y - 8)
+      local box = NewDropdown(content, 250, list, get, function(k) set(k); Changed() end)
+      box:SetPoint("TOPLEFT", 200, b.y)
+      if tip then Tip(box, label, tip, true) end
+      Watch(function()
+        box.refresh()
+        local on = not enabledIf or enabledIf()
+        if box.SetEnabled then pcall(box.SetEnabled, box, on) end
+        box:SetAlpha(on and 1 or DIM)
+        if on then text:SetTextColor(1, 1, 1) else text:SetTextColor(DIM, DIM, DIM) end
+      end)
+      b.y = b.y - 34
+    end
+
+    -- An action button at x (default the left edge); sameLine keeps the next control beside it.
+    function b.Button(label, width, onClick, tip, x, sameLine)
+      local button = ClassicButton(content, width)
+      button:SetPoint("TOPLEFT", x or 18, b.y)
+      button:SetText(label)
+      button:SetScript("OnClick", onClick)
+      if tip then Tip(button, label, tip, true) end
+      if not sameLine then b.y = b.y - 36 end
+      return button
+    end
+
+    function b.Done()
+      content:SetSize(PAGE_WIDTH, -b.y + 24)
+    end
+    b.content, b.Watch, b.Changed, b.Tip = content, Watch, Changed, Tip
+    return b
   end
 
-  AddSection("CAMERA & POSITION", -72, 376)
-  AddCheck("Same for all frames", 28, -98, function() return DB.universal end,
-    function(on)
+  local function ComboRefresh() if ns.ComboRefresh then ns.ComboRefresh() end end
+  local function BuffsRefresh() if ns.BuffsRefresh then ns.BuffsRefresh() end end
+  local function ResetKeys(keys)
+    for _, key in ipairs(keys) do DB[key] = DEFAULTS[key] end
+  end
+
+  -- ===== General =====
+  local function BuildGeneral(def)
+    local b = Builder(def)
+    local getMeta = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+    local version = getMeta and getMeta(addonName, "Version")
+    b.Note((version and ("Version " .. version .. ".  ") or "") .. "3D portraits for the game's unit frames, plus combo points and buff timers. "
+      .. "Type /p3d to open these options." .. (usingSettings and " Pick a page on the left." or ""))
+
+    b.Heading("General")
+    b.Checks({
+      { "3D portraits", function() return DB.enabled end, function(on) SetEnabled(on) end,
+        "Turn the 3D portraits off to get Blizzard's own portraits back exactly as they were (also: right-click the minimap button, or /p3d on | off)." },
+      { "Minimap button", function() return not DB.hideMinimap end, function(on) SetMinimapHidden(not on) end,
+        "A button on the minimap edge: left-click opens these options, right-click turns the 3D portraits on or off." },
+    })
+
+    b.Heading("Frames")
+    b.Note("Which unit frames get a 3D portrait.")
+    local items = {}
+    for _, group in ipairs(GROUPS) do
+      local key = group.key
+      items[#items + 1] = { GROUP_LABEL[key], function() return DB.frames[key] ~= false end,
+        function(on) DB.frames[key] = on; RefreshAll(true) end, nil, function() return DB.enabled end }
+    end
+    b.Checks(items)
+
+    b.Heading("Tools")
+    b.Button("Elite border mover", 170, ToggleBorderTest,
+      "Line up the elite, rare and boss borders on the target frame by hand.", 18, true)
+    b.Button("Reset all settings", 170, function()
+      if StaticPopupDialogs and StaticPopup_Show then
+        StaticPopupDialogs["PORTRAITS3D_RESET"] = {
+          text = "Reset every Portraits 3D setting to its default?",
+          button1 = YES or "Yes", button2 = NO or "No",
+          OnAccept = function()
+            for _, page in ipairs(pages) do if page.reset then page.reset() end end
+            RefreshOptions()
+          end,
+          timeout = 0, whileDead = true, hideOnEscape = true,
+        }
+        StaticPopup_Show("PORTRAITS3D_RESET")
+      end
+    end, "Puts every option on every page back to its default, the tracked buff list included.", 200)
+    b.Done()
+  end
+
+  -- ===== Look =====
+  local function BuildLook(def)
+    local b = Builder(def)
+    local function On() return DB.enabled end
+    b.Heading("Icons & effects")
+    b.Checks({
+      { "Level badge", function() return DB.showBadge ~= false end, function(on) DB.showBadge = on; RefreshAll(true) end,
+        "The level on a round badge at the frame's corner.", On },
+      { "Resting Zzz", function() return DB.showZzz ~= false end, function(on) DB.showZzz = on; RefreshAll(true) end,
+        "The rising Zzz on your portrait in a rested area.", On },
+      { "Status glow", function() return DB.showGlow ~= false end, function(on) DB.showGlow = on; RefreshAll(true) end,
+        "A soft pulse around the player and pet frames: gold while resting, red in combat.", On },
+      { "Hide combat text", function() return DB.hideCombatText == true end, function(on) DB.hideCombatText = on; RefreshAll(true) end,
+        "Hides the damage and healing numbers that pop up over the player and pet portraits.", On },
+      { "Hide combat icon", function() return DB.hideSwords == true end, function(on) DB.hideSwords = on; RefreshAll(true) end,
+        "Hides the crossed swords that show on your portrait during combat.", On },
+    })
+
+    b.Heading("Background")
+    local function IsGradient()
+      local mode = DB.background or "black"
+      return DB.enabled and (mode == "gradient" or mode == "class")
+    end
+    b.Choice("Background", BACKGROUNDS, function() return DB.background or "black" end, SetBackground, On,
+      "What shows behind the model.")
+    b.Slider("Gradient height", "gradient", 0.1, 1, 0.05, nil, nil, IsGradient)
+    b.Slider("Gradient opacity", "gradientAlpha", 0.1, 1, 0.05, nil, nil, IsGradient)
+
+    b.Heading("Animation")
+    b.Choice("Animation", ANIMATIONS, function() return DB.anim end, SetAnimationMode, On,
+      "Which idle animations the models play.")
+    b.Done()
+  end
+
+  -- ===== Camera =====
+  local function BuildCamera(def)
+    local b = Builder(def)
+    local selected = "player" -- the frame group the sliders edit
+    local function Prefix()
+      if DB.universal then return "" end
+      for _, group in ipairs(SIZE_GROUPS) do
+        if group.key == selected then return group.prefix end
+      end
+      return ""
+    end
+    local function K(name)
+      local prefix = Prefix()
+      return prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))
+    end
+    local function On() return DB.enabled end
+    b.Note("Zoom, turn and place the model inside each portrait. Right-click a slider to put it back to its default.")
+    b.Check("Same for all frames", function() return DB.universal end, function(on)
       DB.universal = on
       for _, entry in ipairs(ENTRIES) do
         Layout(entry)
         if entry.model and entry.holder:IsShown() then ApplyCamera(entry) end
       end
-      f.refresh()
-    end,
-    "One set of camera and position settings for every frame, instead of one per frame group.")
-  -- Tabs choose which frames the sliders below edit.
-  local tabs = {}
-  for i, group in ipairs(SIZE_GROUPS) do
-    local tab = CreateFrame("Button", nil, f)
-    tab:SetSize(66, 24)
-    tab:SetPoint("TOPLEFT", 28 + colX + (i - 1) * 68, -126)
-    local back = tab:CreateTexture(nil, "BACKGROUND")
-    back:SetAllPoints()
-    local line = tab:CreateTexture(nil, "ARTWORK")
-    line:SetPoint("BOTTOMLEFT")
-    line:SetPoint("BOTTOMRIGHT")
-    line:SetHeight(2)
-    local hover = tab:CreateTexture(nil, "HIGHLIGHT")
-    hover:SetAllPoints()
-    hover:SetColorTexture(1, 1, 1, 0.08)
-    local label = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    label:SetPoint("CENTER", 0, 1)
-    label:SetText(group.label)
-    tab:SetScript("OnClick", function() selected = group.key; f.refresh() end)
-    tab:SetScript("OnEnter", function(self)
-      GameTooltip:SetOwner(self, "ANCHOR_TOP")
-      GameTooltip:SetText(group.covers)
-      GameTooltip:Show()
+    end, "One set of camera and position settings for every frame, instead of one per frame group.", On)
+    b.Choice("Frames to edit", SIZE_GROUPS, function() return selected end, function(key) selected = key end,
+      function() return DB.enabled and not DB.universal end, "Which frames the sliders below change.")
+
+    b.Heading("Camera")
+    b.Slider("Zoom", function() return K("zoom") end, 0, 2, 0.05, nil, nil, On)
+    b.Slider("Turn", function() return K("turn") end, -90, 90, 5, "%d°", nil, On)
+    b.Heading("Model position")
+    b.Slider("Left / right", function() return K("offX") end, -0.5, 0.5, 0.01, nil, nil, On)
+    b.Slider("Up / down", function() return K("offY") end, -0.5, 0.5, 0.01, nil, nil, On)
+    b.Slider("Model size", function() return K("size") end, 0.5, 1.2, 0.05, nil, nil, On)
+    b.Done()
+  end
+
+  -- ===== Combo points =====
+  local COMBO_STYLES = {
+    { key = "modern", label = "Modern round points" },
+    { key = "classic", label = "Classic red gems" },
+  }
+  local function BuildCombo(def)
+    local b = Builder(def)
+    local function PlateOn() return DB.plateCombo ~= false end
+
+    b.Heading("Target frame")
+    b.Note("The game shows your combo points beside your target's portrait. Move them here.")
+    b.Slider("Left / right", "frameComboX", -80, 80, 1, nil, ComboRefresh, nil,
+      "Moves the game's own combo points on the target frame.")
+    b.Slider("Up / down", "frameComboY", -80, 80, 1, nil, ComboRefresh, nil,
+      "Moves the game's own combo points on the target frame.")
+
+    b.Heading("Nameplate")
+    b.Note("Your combo points on your target's nameplate too, on the top edge of its health bar, "
+      .. "drawn with Blizzard's own combo point art. Rogues and druids in cat form also see the empty slots.")
+    b.Check("Show on the target's nameplate", PlateOn, function(on) DB.plateCombo = on; ComboRefresh() end)
+    b.Choice("Style", COMBO_STYLES, function() return DB.plateComboStyle == "classic" and "classic" or "modern" end,
+      function(key) DB.plateComboStyle = key; ComboRefresh() end, PlateOn,
+      "The round points of the newer unit frames, or the red gems of the old target frame.")
+    b.Slider("Size", "plateComboScale", 0.5, 2, 0.05, nil, ComboRefresh, PlateOn)
+    b.Slider("Left / right", "plateComboX", -80, 80, 1, nil, ComboRefresh, PlateOn)
+    b.Slider("Up / down", "plateComboY", -40, 80, 1, nil, ComboRefresh, PlateOn)
+    b.Done()
+  end
+
+  -- ===== Tracked buffs =====
+  local function BuildBuffs(def)
+    local b = Builder(def)
+    local content = b.content
+    local function On() return DB.trackBuffs ~= false end
+    b.Note("Icons for the buffs in your list while they are on you, under the player frame, "
+      .. "with the time left under each. Hover an icon for the buff's tooltip.")
+    b.Checks({
+      { "Show under the player frame", On, function(on)
+          DB.trackBuffs = on
+          if not on and ns.BuffsPreview then ns.BuffsPreview(false) end
+          BuffsRefresh()
+        end },
+      { "Preview", function() return ns.BuffsPreview and ns.BuffsPreview() or false end,
+        function(on) if ns.BuffsPreview then ns.BuffsPreview(on) end end,
+        "Shows every buff in the list with a sample timer while this page is open, so you can size and place the row.", On },
+    })
+    b.Slider("Icon size", "buffSize", 16, 40, 1, nil, BuffsRefresh, On)
+    b.Slider("Left / right", "buffX", -80, 80, 1, nil, BuffsRefresh, On)
+    b.Slider("Up / down", "buffY", -80, 80, 1, nil, BuffsRefresh, On)
+
+    b.Heading("Buffs to track")
+    local label = content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    label:SetPoint("TOPLEFT", 40, b.y - 6)
+    label:SetText("Add a buff")
+    local input = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+    input:SetSize(200, 20)
+    input:SetPoint("TOPLEFT", 206, b.y - 3)
+    input:SetAutoFocus(false)
+    input:SetMaxLetters(60)
+    local function AddTyped()
+      if ns.BuffsAdd and ns.BuffsAdd(input:GetText() or "") then input:SetText("") end
+      input:ClearFocus()
+      RefreshOptions()
+    end
+    input:SetScript("OnEnterPressed", AddTyped)
+    input:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    b.Tip(input, "Add a buff", "Type the buff's name as the game writes it (Slice and Dice) or its spell ID, then press Enter.")
+    b.Button("Add", 70, AddTyped, nil, 416, true)
+    b.Button("Default list", 110, function()
+      if ns.BuffsResetList then ns.BuffsResetList() end
+      RefreshOptions()
+    end, "Slice and Dice, Adrenaline Rush, Blade Flurry, Evasion, Sprint, Cold Blood, Tiger's Fury and Dash.", 492, true)
+    b.y = b.y - 36
+
+    -- the list, two columns; the red cross stops tracking a buff
+    local ROWS = 24
+    local listRows = {}
+    local top = b.y
+    for i = 1, ROWS do
+      local r = CreateFrame("Frame", nil, content)
+      r:SetSize(280, 22)
+      r:SetPoint("TOPLEFT", 40 + ((i - 1) % 2) * 290, top - math.floor((i - 1) / 2) * 24)
+      r.icon = r:CreateTexture(nil, "ARTWORK")
+      r.icon:SetSize(20, 20)
+      r.icon:SetPoint("LEFT", 0, 0)
+      r.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+      r.text = r:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+      r.text:SetPoint("LEFT", r.icon, "RIGHT", 8, 0)
+      r.text:SetPoint("RIGHT", -24, 0)
+      r.text:SetJustifyH("LEFT")
+      r.text:SetWordWrap(false)
+      r.remove = CreateFrame("Button", nil, r)
+      r.remove:SetSize(16, 16)
+      r.remove:SetPoint("RIGHT", -2, 0)
+      r.remove:SetNormalTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
+      r.remove:SetHighlightTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Highlight", "ADD")
+      r.remove:SetPushedTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Down")
+      r.remove:SetScript("OnClick", function()
+        if ns.BuffsRemove and r.index then ns.BuffsRemove(r.index) end
+        RefreshOptions()
+      end)
+      r.remove:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Stop tracking " .. (r.name or ""))
+        GameTooltip:Show()
+      end)
+      r.remove:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      listRows[i] = r
+    end
+    b.y = top - (ROWS / 2) * 24
+    local more = content:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    more:SetPoint("TOPLEFT", 40, b.y)
+    b.y = b.y - 16
+    b.Watch(function()
+      local list = ns.BuffsList and ns.BuffsList() or {}
+      local on = On()
+      for i, r in ipairs(listRows) do
+        local name = list[i]
+        r.index, r.name = i, name and tostring(name)
+        r:SetShown(name ~= nil)
+        if name then
+          local id = tonumber(name)
+          local shown = id and ((C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id))
+            or (GetSpellInfo and GetSpellInfo(id))) or tostring(name)
+          r.text:SetText(shown)
+          r.icon:SetTexture(ns.SpellIcon and ns.SpellIcon(id or name) or nil)
+          r:SetAlpha(on and 1 or DIM)
+        end
+      end
+      more:SetText(#list > ROWS and ("and " .. (#list - ROWS) .. " more (/p3d buffs lists them all)") or "")
+      input:SetEnabled(on)
+      input:SetAlpha(on and 1 or DIM)
     end)
-    tab:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    tabs[i] = { tab = tab, back = back, line = line, label = label, key = group.key }
+    b.Done()
   end
-  local covers = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-  covers:SetPoint("TOPLEFT", 30 + colX, -156)
-  covers:SetTextColor(0.65, 0.65, 0.65)
-  controls[#controls + 1] = function()
-    for _, t in ipairs(tabs) do
-      local on = t.key == selected
-      t.tab:SetShown(not DB.universal)
-      Shade(t.back, 1, 1, 1, on and 0.1 or 0.03, on and 0.2 or 0.06)
-      t.line:SetColorTexture(1, 0.82, 0, on and 0.9 or 0)
-      t.label:SetTextColor(on and 1 or 0.7, on and 0.82 or 0.7, on and 0 or 0.7)
+
+  local CAMERA_KEYS = { "universal" }
+  for _, prefix in ipairs({ "", "target", "party", "pet" }) do
+    for _, name in ipairs({ "size", "zoom", "offX", "offY", "turn" }) do
+      CAMERA_KEYS[#CAMERA_KEYS + 1] = prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))
     end
-    local text = "Editing: every frame"
-    if not DB.universal then
-      for _, group in ipairs(SIZE_GROUPS) do
-        if group.key == selected then text = "Editing: " .. group.covers end
+  end
+
+  pages = {
+    { id = "general", title = "General", header = "Portraits 3D: Forever Frames", build = BuildGeneral,
+      reset = function()
+        DB.frames = {}
+        SetMinimapHidden(DEFAULTS.hideMinimap)
+        DB.decoStyle = nil
+        SetEnabled(DEFAULTS.enabled)
+      end },
+    { id = "look", title = "Look", icon = "INV_Misc_Gem_Variety_01", build = BuildLook,
+      reset = function()
+        ResetKeys({ "showBadge", "showGlow", "showZzz", "hideCombatText", "hideSwords", "gradient", "gradientAlpha" })
+        SetBackground(DEFAULTS.background)
+        SetAnimationMode(DEFAULTS.anim)
+      end },
+    { id = "camera", title = "Camera", icon = "INV_Misc_Spyglass_03", build = BuildCamera,
+      reset = function()
+        DB.universal = DEFAULTS.universal
+        for i = 2, #CAMERA_KEYS do SetNumber(CAMERA_KEYS[i], DEFAULTS[CAMERA_KEYS[i]]) end
+      end },
+    { id = "combo", title = "Combo points", icon = "Ability_Rogue_Eviscerate", build = BuildCombo,
+      reset = function()
+        ResetKeys({ "plateCombo", "plateComboStyle", "plateComboScale", "plateComboX", "plateComboY",
+          "frameComboX", "frameComboY" })
+        ComboRefresh()
+      end },
+    { id = "buffs", title = "Tracked buffs", icon = "Ability_Rogue_SliceDice", build = BuildBuffs,
+      onHide = function() if ns.BuffsPreview and ns.BuffsPreview() then ns.BuffsPreview(false) end end,
+      reset = function()
+        ResetKeys({ "trackBuffs", "buffSize", "buffX", "buffY" })
+        if ns.BuffsPreview then ns.BuffsPreview(false) end
+        if ns.BuffsResetList then ns.BuffsResetList() end
+        BuffsRefresh()
+      end },
+  }
+
+  -- ===== Where the pages live =====
+  -- Normal case: the game's Settings panel (Options > AddOns > Portraits 3D and its sub-pages).
+  local function RegisterWithSettings()
+    if not (Settings and Settings.RegisterCanvasLayoutCategory
+        and Settings.RegisterCanvasLayoutSubcategory and Settings.RegisterAddOnCategory) then
+      return false
+    end
+    local ok = pcall(function()
+      mainCategory = Settings.RegisterCanvasLayoutCategory(pages[1].page, CATEGORY_TITLE)
+      Settings.RegisterAddOnCategory(mainCategory)
+      for i = 2, #pages do
+        pages[i].category = Settings.RegisterCanvasLayoutSubcategory(mainCategory, pages[i].page, CategoryName(pages[i]))
       end
+    end)
+    return ok and mainCategory ~= nil
+  end
+
+  -- Fallback: a window with tab buttons, for a game without a Settings panel.
+  local tabButtons = {}
+  local function ShowStandalonePage(id)
+    for _, def in ipairs(pages) do
+      def.page:SetShown(def.id == id)
+      if def.id == id then tabButtons[def.id]:Disable() else tabButtons[def.id]:Enable() end
     end
-    covers:SetText(text)
-  end
-  -- A small heading with a thin line, to group the sliders.
-  local function AddHeading(label, y)
-    local text = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    text:SetPoint("TOPLEFT", 30 + colX, y)
-    text:SetText(label)
-    text:SetTextColor(1, 0.82, 0, 0.9)
-    -- a thin line from the heading to the card's right side
-    local line = f:CreateTexture(nil, "ARTWORK")
-    line:SetColorTexture(1, 1, 1, 0.14)
-    line:SetPoint("LEFT", text, "RIGHT", 6, 0)
-    line:SetPoint("RIGHT", f, "LEFT", 292 + colX, 0)
-    line:SetHeight(1)
+    standalone.currentPage = id
   end
 
-  AddHeading("CAMERA", -180)
-  AddSlider(function() return K("zoom") end, "Zoom", 0, 2, -198, 0.05)
-  AddSlider(function() return K("turn") end, "Turn", -90, 90, -244, 5)
-  AddHeading("MODEL POSITION", -294)
-  AddSlider(function() return K("offX") end, "Left / right", -0.5, 0.5, -312, 0.01)
-  AddSlider(function() return K("offY") end, "Up / down", -0.5, 0.5, -358, 0.01)
-  AddSlider(function() return K("size") end, "Model size", 0.5, 1.2, -404, 0.05)
+  local function BuildStandalone()
+    local ok, f = pcall(CreateFrame, "Frame", "Portraits3DOptions", UIParent, "BasicFrameTemplateWithInset")
+    if not ok then f = CreateFrame("Frame", "Portraits3DOptions", UIParent) end
+    standalone = f
+    f:SetSize(PAGE_WIDTH + 60, 600)
+    f:SetPoint("CENTER")
+    f:SetFrameStrata("DIALOG")
+    f:SetMovable(true)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:Hide()
+    EscapeCloses(f)
+    local title = f.TitleText or f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    if not f.TitleText then title:SetPoint("TOP", 0, -6) end
+    title:SetText(CATEGORY_TITLE)
+    local x = 10
+    for _, def in ipairs(pages) do
+      local button = DarkButton(f, 128, 24)
+      button:SetPoint("TOPLEFT", x, -30)
+      button:SetText(def.title)
+      button:SetScript("OnClick", function() ShowStandalonePage(def.id) end)
+      tabButtons[def.id] = button
+      x = x + 130
+      def.page:SetParent(f)
+      def.page:ClearAllPoints()
+      def.page:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -60)
+      def.page:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+    end
+    ShowStandalonePage(pages[1].id)
+  end
 
-  AddSection("ANIMATION", -456, 76)
-  AddChoices(ANIMATIONS, -482, function() return DB.anim end, SetAnimationMode)
+  BuildOptions = function()
+    if built then return end
+    built = true
+    for _, def in ipairs(pages) do NewPage(def) end
+    usingSettings = RegisterWithSettings()
+    for _, def in ipairs(pages) do def.build(def) end
+    if not usingSettings then BuildStandalone() end
+  end
 
-  -- Footer: a faint line over the buttons.
-  local foot = f:CreateTexture(nil, "ARTWORK")
-  foot:SetPoint("BOTTOMLEFT", 16, 46)
-  foot:SetPoint("BOTTOMRIGHT", -16, 46)
-  foot:SetHeight(1)
-  foot:SetColorTexture(1, 1, 1, 0.12)
-
-  local borderBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  borderBtn:SetSize(150, 22)
-  borderBtn:SetPoint("BOTTOMLEFT", 24, 14)
-  borderBtn:SetText("Elite border mover")
-  borderBtn:SetScript("OnClick", ToggleBorderTest)
-  if borderBtn.SetMotionScriptsWhileDisabled then borderBtn:SetMotionScriptsWhileDisabled(true) end
-  borderBtn:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_TOP")
-    GameTooltip:SetText("Elite border mover")
-    GameTooltip:AddLine("Line up the elite, rare and boss borders on the target frame by hand.", 1, 1, 1, true)
-    GameTooltip:Show()
-  end)
-  borderBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
-  local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  reset:SetSize(140, 22)
-  reset:SetPoint("BOTTOMRIGHT", -24, 14)
-  reset:SetText("Reset all settings")
-  local function DoReset()
-    DB.frames = {}
-    DB.anim = DEFAULTS.anim
-    DB.universal = DEFAULTS.universal
-    SetBackground(DEFAULTS.background)
-    DB.showBadge, DB.showGlow = DEFAULTS.showBadge, DEFAULTS.showGlow
-    DB.showZzz, DB.hideCombatText, DB.hideSwords = DEFAULTS.showZzz, DEFAULTS.hideCombatText, DEFAULTS.hideSwords
-    SetNumber("gradient", DEFAULTS.gradient)
-    SetNumber("gradientAlpha", DEFAULTS.gradientAlpha)
-    SetMinimapHidden(DEFAULTS.hideMinimap)
-    DB.decoStyle = nil
-    for _, prefix in ipairs({ "", "target", "party", "pet" }) do
-      for _, name in ipairs({ "size", "zoom", "offX", "offY", "turn" }) do
-        local key = prefix == "" and name or (prefix .. name:sub(1, 1):upper() .. name:sub(2))
-        SetNumber(key, DEFAULTS[key])
+  -- Opens one page. The game's Settings panel cannot be opened by an addon during
+  -- combat (the game blocks it), so a request made in combat waits until combat ends.
+  -- The Settings panel is never CLOSED from here (that runs Blizzard's own save steps,
+  -- which an addon can get blocked), so there the toggle only opens.
+  local function OpenPage(id, toggle)
+    BuildOptions()
+    if usingSettings and InCombat() then
+      pendingPage = id
+      Say("the options cannot open during combat. They will open when combat ends.")
+      return
+    end
+    local def = pageById[id] or pageById.general
+    if usingSettings then
+      local category = def.category or mainCategory
+      local categoryID = category and ((category.GetID and category:GetID()) or category.ID)
+      if not (SettingsPanel and SettingsPanel:IsShown() and def.page:IsShown()) then
+        pcall(Settings.OpenToCategory, categoryID)
       end
-    end
-    SetEnabled(DEFAULTS.enabled)
-    f.refresh()
-  end
-  reset:SetScript("OnClick", function()
-    if StaticPopupDialogs and StaticPopup_Show then
-      StaticPopupDialogs["PORTRAITS3D_RESET"] = {
-        text = "Reset every Portraits 3D setting to its default?",
-        button1 = YES or "Yes", button2 = NO or "No",
-        OnAccept = DoReset, timeout = 0, whileDead = true, hideOnEscape = true,
-      }
-      StaticPopup_Show("PORTRAITS3D_RESET")
+    elseif toggle and standalone:IsShown() and standalone.currentPage == def.id then
+      standalone:Hide()
     else
-      DoReset()
+      ShowStandalonePage(def.id)
+      standalone:Show()
+    end
+  end
+
+  ToggleWindow = function(id) OpenPage(type(id) == "string" and id or "general", true) end
+
+  local waiter = CreateFrame("Frame")
+  waiter:RegisterEvent("PLAYER_REGEN_ENABLED")
+  waiter:SetScript("OnEvent", function()
+    if pendingPage then
+      local id = pendingPage
+      pendingPage = nil
+      OpenPage(id)
     end
   end)
-  reset:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_TOP")
-    GameTooltip:SetText("Reset all settings")
-    GameTooltip:AddLine("Puts every option on every tab back to its default.", 1, 1, 1, true)
-    GameTooltip:Show()
-  end)
-  reset:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
-  f.refresh = function() for _, update in ipairs(controls) do update() end end
-  f:SetScript("OnShow", f.refresh)
-  f:Hide()
-  return f
-end
-
-local function ToggleWindow()
-  win = win or BuildWindow()
-  if win:IsShown() then
-    win:Hide()
-    return
-  end
-  -- Close the game's settings so the unit frames are visible while tuning (not in
-  -- combat: closing it from an addon there can get the game's own actions blocked).
-  if SettingsPanel and SettingsPanel:IsShown() and not (InCombatLockdown and InCombatLockdown()) then
-    pcall(HideUIPanel, SettingsPanel)
-  end
-  win:Show()
 end
 
 -- Minimap button: left click opens the options, right click turns the 3D
@@ -2197,7 +2616,7 @@ local function BuildMinimapButton()
   button:SetScript("OnClick", function(_, mouseButton)
     if mouseButton == "RightButton" then
       SetEnabled(not DB.enabled)
-      if win and win.refresh then win.refresh() end
+      RefreshOptions()
     else
       ToggleWindow()
     end
@@ -2223,34 +2642,10 @@ local function BuildMinimapButton()
   C_Timer.After(1, function() PlaceMinimapButton(DB.minimapAngle or math.rad(160)) end)
 end
 
--- The entry under Options > AddOns only holds a button that opens the window.
+-- The options pages under Options > AddOns (built and registered at load, so the
+-- Settings panel lists them from the start).
 local function BuildPanel()
-  local panel = CreateFrame("Frame")
-  panel.name = "Portraits 3D: Forever Frames"
-
-  local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalHuge")
-  title:SetPoint("TOP", 0, -80)
-  title:SetText("Portraits 3D: Forever Frames")
-  local sub = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-  sub:SetPoint("TOP", title, "BOTTOM", 0, -8)
-  sub:SetText("3D unit frame portraits")
-
-  local open = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  open:SetSize(260, 44)
-  open:SetText("Open options")
-  pcall(function() open:GetFontString():SetFontObject("GameFontNormalLarge") end)
-  open:SetPoint("TOP", sub, "BOTTOM", 0, -60)
-  local hint = panel:CreateFontString(nil, "ARTWORK", "GameFontDisable")
-  hint:SetPoint("TOP", open, "BOTTOM", 0, -8)
-  hint:SetText("or type /p3d")
-  open:SetScript("OnClick", ToggleWindow)
-
-  if Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory then
-    local category = Settings.RegisterCanvasLayoutCategory(panel, "Portraits 3D: Forever Frames")
-    Settings.RegisterAddOnCategory(category)
-  elseif InterfaceOptions_AddCategory then
-    InterfaceOptions_AddCategory(panel)
-  end
+  BuildOptions()
 end
 
 -- /p3d dump <unit>: lists the named pieces inside a unit frame's ring and
@@ -2445,6 +2840,13 @@ local function ToggleVehiclePreview()
   return true
 end
 
+-- for NameplateCombo.lua: the custom portrait square shown on a unit's frame, if any
+function ns.PortraitSquare(unit)
+  for _, entry in ipairs(ENTRIES) do
+    if entry.unit == unit and entry.border and entry.border:IsShown() then return entry.border end
+  end
+end
+
 SLASH_PORTRAITS3D1 = "/p3d"
 SlashCmdList["PORTRAITS3D"] = function(msg)
   local cmd, arg = (msg or ""):match("^(%S*)%s*(.-)$")
@@ -2455,7 +2857,11 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
   elseif cmd == "minimap" then
     SetMinimapHidden(not DB.hideMinimap)
     Say("minimap button " .. (DB.hideMinimap and "hidden" or "shown"))
-    if win and win:IsShown() then win.refresh() end -- its "Minimap button" box
+    RefreshOptions() -- its "Minimap button" box
+  elseif cmd == "combo" then
+    ns.ComboCommand(arg, Say)
+  elseif cmd == "buffs" then
+    ns.BuffsCommand(arg, Say)
   elseif cmd == "dev" then
     -- developer tools, not needed in normal use
     local sub, rest = arg:match("^(%S*)%s*(.-)$")
@@ -2569,15 +2975,19 @@ SlashCmdList["PORTRAITS3D"] = function(msg)
           end
         end
       end
+    elseif sub == "combo" then
+      if ns.ComboDebug then ns.ComboDebug(Say) end
+    elseif sub == "buffs" then
+      if ns.BuffsDebug then ns.BuffsDebug(Say) end
     elseif sub == "vehicle" then
       Say(ToggleVehiclePreview() and "vehicle frames preview shown (our own copy; the game's frames are not touched)" or "vehicle frames preview closed")
     else
-      Say("/p3d dev testparty | vehicle | debug | ring [unit] | shown [unit] | dump <unit>")
+      Say("/p3d dev testparty | vehicle | combo | buffs | debug | ring [unit] | shown [unit] | dump <unit>")
     end
   elseif cmd == "" or cmd == "options" or cmd == "config" then
     ToggleWindow()
   else
-    Say("/p3d opens the options. Also: /p3d on | off | minimap")
+    Say("/p3d opens the options. Also: /p3d on | off | minimap | combo | buffs")
   end
 end
 

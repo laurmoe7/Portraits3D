@@ -7,3 +7,5 @@
 ## SavedVariables: Portraits3DDB
 
 Portraits3D.lua
+NameplateCombo.lua
+TrackedBuffs.lua
