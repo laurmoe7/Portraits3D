@@ -15,6 +15,9 @@ local MODERN = {
 local CLASSIC_FILE = "Interface\\ComboFrame\\ComboPoint"
 local MODERN_SCALE = 0.75 -- the modern points at full size are large for a nameplate
 local CAT_FORM = 1
+-- the drawing layer above each one (for drawing the nameplate's points over the whole plate)
+local NEXT_STRATA = { BACKGROUND = "LOW", LOW = "MEDIUM", MEDIUM = "HIGH", HIGH = "DIALOG",
+  DIALOG = "FULLSCREEN", FULLSCREEN = "FULLSCREEN_DIALOG", FULLSCREEN_DIALOG = "TOOLTIP" }
 
 local DEFAULTS = {
   plateCombo = true, plateComboStyle = "modern", plateComboScale = 1, plateComboX = 0, plateComboY = 0,
@@ -244,17 +247,16 @@ local function Attach(d, plate)
   local health = uf.healthBar or (uf.HealthBarsContainer and uf.HealthBarsContainer.healthBar)
   local bar = d.bar
   bar:SetParent(uf)
-  bar:SetFrameStrata(uf:GetFrameStrata())
-  -- above everything on the nameplate, the cast bar included, so nothing covers the points
-  local level = uf:GetFrameLevel()
-  for _, child in ipairs({ uf:GetChildren() }) do
-    if child ~= bar and child.GetFrameLevel then level = math.max(level, child:GetFrameLevel()) end
+  -- one drawing layer (strata) above the nameplate: nothing on it, the cast bar
+  -- included, can cover the points, however the game stacks its own parts
+  local ORDER = { BACKGROUND = 1, LOW = 2, MEDIUM = 3, HIGH = 4, DIALOG = 5, FULLSCREEN = 6, FULLSCREEN_DIALOG = 7, TOOLTIP = 8 }
+  local strata = uf:GetFrameStrata()
+  for _, part in ipairs({ plate, uf.castBar, uf.CastBar }) do
+    local s2 = type(part) == "table" and part.GetFrameStrata and part:GetFrameStrata()
+    if s2 and (ORDER[s2] or 0) > (ORDER[strata] or 0) then strata = s2 end
   end
-  for _, key in ipairs({ "castBar", "CastBar" }) do
-    local cast = uf[key]
-    if type(cast) == "table" and cast.GetFrameLevel then level = math.max(level, cast:GetFrameLevel()) end
-  end
-  bar:SetFrameLevel(math.min(level + 5, 9000))
+  bar:SetFrameStrata(NEXT_STRATA[strata] or strata)
+  bar:SetFrameLevel(math.min(uf:GetFrameLevel() + 10, 9000))
   local scale = d.baseScale * db.plateComboScale
   bar:SetScale(scale)
   bar:ClearAllPoints()
